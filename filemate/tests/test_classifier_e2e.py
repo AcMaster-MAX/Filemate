@@ -78,7 +78,8 @@ def run_e2e():
             import pytest
             pytest.skip("未找到样本文件，跳过测试")
         except ImportError:
-            sys.exit(0)
+            pass
+        sys.exit(0)
 
     logger.info("共找到 %d 份样本文件", len(samples))
 

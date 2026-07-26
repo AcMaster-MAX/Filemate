@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 # 命名规范：[课程]-[类型]-[任务]-[截止]-[状态]
 # 示例：[操作系统]-[作业]-[实验三]-[0415]-[待处理].docx
 
-_VALID_CATEGORIES = {"课件", "作业", "竞赛通知", "考试通知", "参考资料", "大创通知", "待确认"}
+from filemate.core.categories import CATEGORIES
+
+_VALID_CATEGORIES = set(CATEGORIES)
 _DEFAULT_STATUS = "待处理"
 _MAX_LEN = 80  # 文件名（不含扩展名）最大长度
 
@@ -117,7 +119,7 @@ class Namer:
                 return refined
         except Exception as exc:
             logger.debug("LLM 精简任务名失败: %s", exc)
-        # 失败则硬截断
+        # 失败则硬截断到 15 字（与 LLM 目标一致）
         return task[:15]
 
     @staticmethod

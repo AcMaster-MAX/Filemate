@@ -21,6 +21,9 @@ def _make_classifier(llm_client_stub=None):
     return Classifier(llm_client_stub, rules_path=None)
 
 
+from filemate.core.categories import CATEGORIES
+
+
 class TestClassifierContract:
     """验证分类器输出符合接口契约。"""
 
@@ -33,8 +36,7 @@ class TestClassifierContract:
     def test_category_in_set(self) -> None:
         clf = _make_classifier()
         result = clf.classify("随便什么文本")
-        valid = {"课件", "作业", "竞赛通知", "考试通知", "参考资料", "大创通知", "待确认"}
-        assert result["category"] in valid, f"category={result['category']} 不合法"
+        assert result["category"] in set(CATEGORIES), f"category={result['category']} 不合法"
 
     def test_confidence_range(self) -> None:
         clf = _make_classifier()
