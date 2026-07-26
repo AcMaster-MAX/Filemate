@@ -122,7 +122,10 @@ class LLMClient:
         # 尝试提取被 ```json ... ``` 包裹的内容
         cleaned = text.strip()
         if cleaned.startswith("```"):
-            cleaned = "\n".join(cleaned.splitlines()[1:])
+            lines = cleaned.splitlines()
+            cleaned = "\n".join(lines[1:])
+        # 去除尾部 ```（可能夹在末尾空行之后）
+        cleaned = cleaned.rstrip()
         if cleaned.endswith("```"):
             cleaned = "\n".join(cleaned.splitlines()[:-1])
         cleaned = cleaned.strip()
