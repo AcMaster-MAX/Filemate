@@ -104,7 +104,7 @@ class Namer:
 
     def _maybe_refine_task(self, task: str, category: str, course: str) -> str:
         """如果 task 过长（> 20 字），尝试用 LLM 精简。"""
-        if len(task) <= 20:
+        if len(task) <= 15:
             return task
         try:
             prompt = (
@@ -113,12 +113,12 @@ class Namer:
             )
             refined = self.llm.call(prompt=prompt, max_tokens=32, temperature=0.0).strip()
             refined = self._clean(refined)
-            if 2 <= len(refined) <= 20:
+            if 2 <= len(refined) <= 15:
                 return refined
         except Exception as exc:
             logger.debug("LLM 精简任务名失败: %s", exc)
         # 失败则硬截断
-        return task[:20]
+        return task[:15]
 
     @staticmethod
     def _truncate(name: str, course: str, task: str, deadline: str, status: str, category: str) -> str:

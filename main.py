@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import uuid
@@ -27,6 +28,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 
 from filemate.llm_client import LLMClient, LLMConfig
 from filemate.perception import FileParser
+from filemate.perception.ocr import OCRBackend
 from filemate.understanding import (
     Classifier,
     EntityExtractor,
@@ -63,12 +65,30 @@ def _make_stages(
     """构造阶段链，每个阶段是 (ProcessingSession) -> ProcessingSession。"""
     stages: list = []
 
-    # 阶段 1：解析文件
+    # 阶段 1：解析文件（图片型 PDF 自动 OCR 回退）
+    _ocr = OCRBackend()  # 全局单例，懒加载
+
     def parse(session: ProcessingSession) -> ProcessingSession:
-        parsed = parser.parse(session.source_path)
-        session.entities["raw_text"] = parsed.get("raw_text", "")
-        session.entities["metadata"] = parsed.get("metadata", {})
-        storage.log_operation(session.session_id, "parse", session.source_path)
+        source = session.source_path
+        parsed = parser.parse(source)
+        raw_text = parsed.get("raw_text", "")
+        meta = parsed.get("metadata", {})
+
+        # 空文本 + 图片型 PDF → 尝试 OCR
+        if not raw_text.strip() and meta.get("suffix") == "pdf" and meta.get("text_pages", 1) == 0:
+            if _ocr.available:
+                logger.info("[%s] 图片型 PDF，启动 OCR: %s", session.session_id, Path(source).name)
+                raw_text = _ocr.recognize(source)
+                if raw_text.strip():
+                    logger.info("[%s] OCR 成功，识别 %d 字", session.session_id, len(raw_text))
+                else:
+                    logger.warning("[%s] OCR 未识别到文字", session.session_id)
+            else:
+                logger.info("[%s] 图片型 PDF，OCR 不可用（PaddleOCR 未安装），跳过", session.session_id)
+
+        session.entities["raw_text"] = raw_text
+        session.entities["metadata"] = meta
+        storage.log_operation(session.session_id, "parse", source)
         return session
     parse.__name__ = "parse"  # type: ignore[attr-defined]
     stages.append(parse)
@@ -214,6 +234,7 @@ async def process_single(
     calendar = CalendarBuilder()
     file_ops = FileOps()
     storage = SQLiteStorage(db_path)
+    storage.init_schema()
     archiver = Archiver(Path(".").resolve() / "archive", file_ops)
 
     # 构造 session
@@ -222,17 +243,38 @@ async def process_single(
     storage.create_session(session_id, path)
 
     # 运行阶段链
+    session.transition(SessionStatus.PROCESSING)
     stages = _make_stages(
         parser, classifier, extractor, detector, namer,
         calendar, archiver, storage, llm,
         skip_calendar=skip_calendar,
     )
     for stage in stages:
-        session = stage(session)
-        if session.status == SessionStatus.FAILED:
+        try:
+            session = stage(session)
+        except Exception as exc:
+            session.error = f"{getattr(stage, '__name__', 'unknown')} 失败: {exc}"
+            session.transition(SessionStatus.FAILED)
+            logger.error("[%s] 阶段失败: %s", session.session_id, session.error)
             break
 
-    storage.update_session(session_id, **session.to_dict())
+    # 终态
+    if session.status == SessionStatus.PROCESSING:
+        session.transition(SessionStatus.DONE)
+
+    session_dict = session.to_dict()
+    # update_session 只接受部分字段，过滤 + 序列化复杂类型
+    _allowed = {"status", "category", "confidence", "suggested_name",
+                "entities", "milestones", "error", "user_modified"}
+    filtered = {}
+    for k, v in session_dict.items():
+        if k not in _allowed:
+            continue
+        if isinstance(v, (dict, list)):
+            filtered[k] = json.dumps(v, ensure_ascii=False)
+        else:
+            filtered[k] = v
+    storage.update_session(session_id, **filtered)
     return session
 
 
@@ -246,6 +288,7 @@ def main() -> None:
     # watch 模式
     if args.watch_dir:
         storage = SQLiteStorage(args.db)
+        storage.init_schema()
 
         async def _processor(session: ProcessingSession) -> None:
             try:

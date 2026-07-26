@@ -25,7 +25,7 @@ class MilestoneDetector:
         self.llm = llm_client
 
     def detect(self, text: str) -> list[dict[str, Any]]:
-        """从文本中提取所有关键时间节点。空文本返回空列表。"""
+        """从文本中提取所有关键时间节点。空文本返回空列表。失败时自动重试一次。"""
         if not text or not text.strip():
             return []
 
@@ -35,32 +35,43 @@ class MilestoneDetector:
         prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
         snippet = text[:6000]
 
-        try:
-            result = self.llm.call_structured(
-                prompt=prompt,
-                messages=[{"role": "user", "content": snippet}],
-            )
-            if not isinstance(result, list):
-                logger.debug("里程碑识别返回非数组: %s", type(result))
-                return []
-            # 规范：只保留有 date 字段的记录，按 order 排序
-            events = []
-            for idx, item in enumerate(result):
-                event = item.get("event", "")
-                date = item.get("date", "")
-                order = item.get("order", idx + 1)
-                if event and self._looks_like_date(date):
-                    events.append({
-                        "event": str(event).strip(),
-                        "date": date.strip(),
-                        "order": int(order),
-                    })
-            events.sort(key=lambda x: x["order"])
-            logger.debug("识别到 %d 个里程碑", len(events))
-            return events
-        except Exception as exc:
-            logger.error("里程碑识别失败: %s", exc)
-            return []
+        # 第一次：max_tokens=2048；失败后重试 max_tokens=4096
+        for attempt, max_tokens in [(1, 2048), (2, 4096)]:
+            try:
+                result = self.llm.call_structured(
+                    prompt=prompt,
+                    messages=[{"role": "user", "content": snippet}],
+                    max_tokens=max_tokens,
+                )
+                if not isinstance(result, list):
+                    logger.debug("里程碑识别返回非数组: %s", type(result))
+                    continue
+                # 规范：只保留有 date 字段的记录，按 order 排序
+                events = []
+                seen_dates: set[str] = set()
+                for idx, item in enumerate(result):
+                    event = str(item.get("event", "")).strip()
+                    date = str(item.get("date", "")).strip()
+                    order = item.get("order", idx + 1)
+                    if event and self._looks_like_date(date) and date not in seen_dates:
+                        events.append({
+                            "event": event,
+                            "date": date,
+                            "order": int(order),
+                        })
+                        seen_dates.add(date)
+                events.sort(key=lambda x: x["order"])
+                # 强制重排为连续序号
+                for i, ev in enumerate(events, 1):
+                    ev["order"] = i
+                logger.debug("识别到 %d 个里程碑", len(events))
+                return events
+            except Exception as exc:
+                logger.warning("里程碑识别第%d次失败: %s", attempt, exc)
+                continue
+
+        logger.error("里程碑识别在 %d 次尝试后全部失败", 2)
+        return []
 
     # ------------------------------------------------------------------
     # 内部
