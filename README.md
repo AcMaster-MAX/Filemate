@@ -439,54 +439,95 @@ ops = api.get_operations("a1b2c3d4e5f6")
 | **W1 启动** | 2026-07-13 | 环境搭建 + 各模块 Demo |
 | **W2 感知层** | 2026-07-20 | 一个 .docx 丢进去能输出文本 + 元数据 |
 | **W3 理解层** | 2026-07-27 | 分类准确率 ≥ 85%（50 份样本） |
-| **里程碑 1** | **2026-08-03** | `python main.py <file>` 跑通完整流程（命令行即可） ✅ |
-| **W5 执行层深化** | 2026-08-10 | FastAPI + Vue3 完整流程（Web界面） ✅ |
-| **W6 桌面适配** | 2026-08-17 | 移动端适配 + Tauri打包（提前规划） ⏳ |
-| **里程碑 2** | **2026-08-24** | 桌面应用发布 + 初步测试 ⏳ |
-| **W8 收尾** | 2026-08-31 | 阶段成果包 + 中期检查材料 |
+| **里程碑 1** | **2026-08-03** | `python main.py <file>` + FastAPI + Vue3 完整流程 ✅ |
+| **里程碑 2** | **2026-08-03** | 桌面应用打包 + 移动端适配 ✅ |
+| **后续** | 2026-08-31 | 中期检查材料 |
 
 ---
 
-### 📅 FileMate 2.0 规划（8月3日后启动）
+## 📅 FileMate 2.0 展望（8月3日后启动）
 
-**核心理念：** 基于LLM Agent与知识图谱的个人知识智能体系统
+### 项目简介
 
-#### 1. 技术架构升级
+FileMate 2.0 是一个基于大语言模型与知识图谱的大学生个人知识操作系统。
+
+随着数字化学习的发展，大学生积累了大量碎片化学习资源：PDF教材、课程PPT、学习笔记、实验代码、论文资料、图片资料。
+
+然而，传统文件管理工具只能解决"文件存在哪里"，无法解决"这些知识之间有什么关系"、"我目前掌握了什么"、"下一步应该学习什么"。
+
+因此，FileMate 2.0 提出一种面向大学生学习场景的 Personal Knowledge OS（个人知识操作系统）。
+
+系统通过：多模态大模型理解学习资料、知识图谱组织个人知识、RAG增强知识检索、AI Agent主动规划学习路径，实现从文件管理→知识管理→个人成长管理的升级。
+
+### 项目目标
+
+构建一个属于大学生自己的：AI Knowledge Brain（个人知识大脑）。
+
+帮助用户实现：自动理解学习资料、构建个人知识网络、分析知识掌握情况、发现学习薄弱点、生成个性化成长路线。
+
+### 系统架构
 
 ```
-用户学习数据
-       ↓
-多模态理解 → 文档解析 → 语义理解 → 知识抽取
-       ↓
-个人知识图谱 ← 向量数据库 ← 知识存储
-       ↓
-Graph RAG → LLM Agent → 个性化推荐
-       ↓
-用户成长模型 → 能力评估 → 学习路径
+User → Multimodal Knowledge Input (PDF/PPT/Image/Code/Notes) → Multimodal AI Engine (OCR/Document Parsing/Semantic Understanding) 
+→ Personal Knowledge Graph (Knowledge Nodes/Relations/User Knowledge Map) 
+→ AI Learning Agent (RAG Retrieval/Reasoning/Planning) 
+→ Personal Growth Model (Ability Assessment/Weakness Detection/Learning Recommendation)
+→ Intelligent Learning Interface
 ```
 
-#### 2. 核心创新点
+### 核心创新点
 
-| 创新 | 解决的问题 |
-|------|------------|
-| 多模态个人知识图谱 | 学习资料碎片化、难以关联 |
-| 知识增强AI Agent | LLM无法理解个人知识状态 |
-| 动态成长模型 | 缺少长期学习规划 |
+**Innovation 1: 多模态个人知识图谱构建**
 
-#### 3. 技术栈扩展
+传统文件管理系统只能按照文件夹→文件组织信息，但是学习知识天然具有复杂关联。FileMate 通过文档解析、实体抽取、语义理解、知识关联自动构建个人知识图谱。
+
+技术：Multimodal LLM, Embedding, Knowledge Graph, Entity Extraction
+
+**Innovation 2: 基于知识状态感知的主动式AI学习Agent**
+
+传统AI助手是用户提问→AI回答，缺少用户背景理解、长期学习规划、主动发现问题。FileMate Agent能够分析用户学习资料、知识掌握情况、学习目标，主动生成学习建议、知识补充、复习计划。
+
+技术：LLM Agent, RAG, Reasoning, Planning
+
+**Innovation 3: 面向个人成长目标的动态能力建模**
+
+当前学习软件关注"有什么资料"，但忽略"用户能力如何变化"。FileMate建立个人知识画像，结合用户目标（保研/科研/就业/竞赛），生成个性化成长路径。
+
+技术：User Modeling, Knowledge Tracing, Recommendation System
+
+### 技术栈
 
 | 模块 | 技术 |
 |------|------|
+| Framework | Vue3 |
+| Language | TypeScript |
+| UI | Element Plus |
+| Visualization | ECharts / D3.js |
+| Backend | FastAPI |
+| Language | Python |
+| Database | PostgreSQL |
 | LLM | DeepSeek / Qwen / GLM |
-| 向量库 | Chroma / Milvus |
-| 图数据库 | Neo4j |
+| Embedding | BGE Series |
 | RAG | LlamaIndex |
 | Agent | LlamaIndex Agent |
+| OCR | PaddleOCR |
+| Vector Database | Chroma |
+| Graph Database | Neo4j |
 
-#### 4. MVP版本规划
+### MVP版本规划
 
 - **v1.0** (当前)：文件上传 → PDF解析 → AI知识提取 → RAG问答
 - **v2.0** (目标)：用户画像 → 能力评估 → AI学习规划 → 主动式Agent
+
+### Future Research Directions
+
+1. **Knowledge Graph Optimization** - 知识抽取、图谱融合、知识推理
+2. **LLM Agent** - Agent Planning、Tool Calling、Autonomous Learning
+3. **Personalized Learning** - User Modeling、Knowledge Tracing、Recommendation System
+
+### 项目一句话总结
+
+FileMate 2.0 是一个基于大语言模型、知识图谱和智能Agent技术的个人知识操作系统，通过理解用户学习资料、构建个人知识网络，并主动规划学习路径，实现从文件管理到知识成长管理的智能化升级。
 
 ---
 
