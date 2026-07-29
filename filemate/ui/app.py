@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import gradio as gr
 
-from core.session import ProcessingSession
+from filemate.core.session import ProcessingSession
 
 
 class FileMateUI:
     """FileMate Gradio 界面。TODO(余恒)"""
 
     def __init__(self, pipeline_worker, state_store) -> None:
+        """初始化 UI。
+
+        Parameters
+        ----------
+        pipeline_worker : PipelineWorker, optional
+            异步处理流水线（可选，推荐使用简化版 API）。
+        state_store : SQLiteStorage, optional
+            状态存储（可选，推荐使用简化版 API）。
+            直接使用 BackendAPI.process_file() 更简洁。
+        """
         self.pipeline = pipeline_worker
         self.store = state_store
 
