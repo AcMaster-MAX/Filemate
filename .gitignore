@@ -40,3 +40,4 @@ logs/
 *.log
 *.ics
 test_result*.json
+filemate.db*
