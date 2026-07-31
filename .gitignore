@@ -39,4 +39,5 @@ __paddle__/
 logs/
 *.log
 *.ics
-test_result*.json
+# 测试结果 JSON 不入库（分类 / 实体 / 里程碑 / 命名四份）
+test_*result*.json
