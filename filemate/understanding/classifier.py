@@ -10,8 +10,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 分类类别（与技术决策定稿 §4.1 保持一致）
-CATEGORIES = ("课件", "作业", "竞赛通知", "考试通知", "参考资料", "大创通知", "待确认")
+from filemate.core.categories import CATEGORIES
 
 
 class Classifier:
@@ -64,14 +63,10 @@ class Classifier:
         if not scores:
             return None
         best = max(scores, key=scores.get)
-        # 若第二名的得分接近第一名（≤1 分之差），说明关键词存在重叠，
-        # 降级走 LLM 判断更可靠
-        runner_up = sorted(scores.values(), reverse=True)
-        if len(runner_up) > 1 and runner_up[0] - runner_up[1] <= 1:
-            logger.debug("规则模糊: %s vs 其他，降级 LLM", best)
-            return None
-        # 命中数越多置信度越高
-        confidence = min(0.55 + scores[best] * 0.10, 0.92)
+        # PR #4 review: 置信度基础值从 0.70 降到 0.35，单次命中 < 0.45
+        best_score = scores[best]
+        ambiguity = 1.0 if len(scores) == 1 else 0.85
+        confidence = min(ambiguity * (0.35 + best_score * 0.05), 0.55)
         return best, confidence
 
     # ------------------------------------------------------------------

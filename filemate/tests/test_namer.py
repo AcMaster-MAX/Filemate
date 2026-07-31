@@ -8,6 +8,7 @@ import re
 
 import pytest
 
+from filemate.core.categories import CATEGORIES
 from filemate.understanding.namer import Namer
 
 # 命名规范：[课程]-[类型]-[任务]-[截止]-[状态]，五段方括号，段内不得再有方括号
@@ -15,7 +16,8 @@ NAME_PATTERN = re.compile(
     r"^\[[^\[\]]+\]-\[[^\[\]]+\]-\[[^\[\]]+\]-\[[^\[\]]+\]-\[[^\[\]]+\]$"
 )
 
-VALID_CATEGORIES = {"课件", "作业", "竞赛通知", "考试通知", "参考资料", "大创通知", "待确认"}
+# 从唯一事实来源取，不再硬编码（见 filemate/core/categories.py）
+VALID_CATEGORIES = set(CATEGORIES)
 
 MAX_LEN = 80  # 与 namer._MAX_LEN 对齐
 

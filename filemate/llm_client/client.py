@@ -61,7 +61,7 @@ class LLMClient:
         retry: int = 3,
         timeout: float = 60.0,
     ) -> str:
-        """调用 LLM 并返回纯文本回复。支持重试与指数退避。"""
+        """调用 LLM 并返回纯文本回复。只对可恢复错误（限流/超时）重试。"""
         if messages is None:
             messages = []
         if prompt:
@@ -80,15 +80,18 @@ class LLMClient:
                 self._last_usage = {"prompt_tokens": 0, "completion_tokens": 0}
                 return text
             except LLMRateLimitError as exc:
+                # 只对限流错误重试
                 wait = min(2 ** attempt, 30)
                 logger.warning("限流，%ds 后重试 (%d/%d)", wait, attempt, retry)
                 time.sleep(wait)
                 last_exc = exc
             except LLMTimeoutError as exc:
+                # 只对超时错误重试
                 logger.warning("超时，%d/%d 次重试", attempt, retry)
                 last_exc = exc
             except LLMAPIError as exc:
-                logger.error("API 错误: %s", exc)
+                # 不对业务层面错误（配置错误、无效请求等）重试
+                logger.error("API 错误（不重试）: %s", exc)
                 last_exc = exc
                 break
 

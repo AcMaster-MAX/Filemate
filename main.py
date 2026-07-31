@@ -7,6 +7,12 @@
 选项:
     --watch-dir    watchdog 监控目录（会持续运行直到 Ctrl+C）
     --no-calendar  跳过 .ics 生成
+
+TODO(架构):
+    1. 当前阶段链在 main.py 中硬编码，后续应迁移到 PipelineWorker 类
+    2. 各模块初始化在 process_single 中，未来可抽象为工厂模式
+    3. watch 模式使用 asyncio，但 UI 层采用同步接口，需统一架构
+    4. 后续确认层需在此处添加用户确认后的归档逻辑
 """
 
 from __future__ import annotations
@@ -234,7 +240,7 @@ async def process_single(
     calendar = CalendarBuilder()
     file_ops = FileOps()
     storage = SQLiteStorage(db_path)
-    storage.init_schema()
+    storage.init_schema()  # 初始化数据库表
     archiver = Archiver(Path(".").resolve() / "archive", file_ops)
 
     # 构造 session
@@ -288,7 +294,7 @@ def main() -> None:
     # watch 模式
     if args.watch_dir:
         storage = SQLiteStorage(args.db)
-        storage.init_schema()
+        storage.init_schema()  # 初始化数据库表
 
         async def _processor(session: ProcessingSession) -> None:
             try:
@@ -334,6 +340,10 @@ def main() -> None:
     print("\n=== 处理结果 ===")
     print(f"  文件:      {session.source_path}")
     print(f"  分类:      {session.category}（置信度 {session.confidence:.0%}）")
+    if session.entities.get("course_name"):
+        print(f"  课程:      {session.entities['course_name']}")
+    if session.entities.get("task_description"):
+        print(f"  任务:      {session.entities['task_description']}")
     print(f"  建议名:    {session.suggested_name}")
     if session.entities.get("deadline"):
         print(f"  截止时间:  {session.entities['deadline']}")
@@ -347,6 +357,7 @@ def main() -> None:
     if session.error:
         print(f"  错误:      {session.error}")
     print(f"  session:   {session.session_id}")
+    print(f"  状态:      {'✅ 处理完成' if not session.error else '❌ 处理失败'}")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from .file_ops import FileOps, OpResult
 
+from filemate.core.categories import CATEGORIES
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +27,7 @@ class Archiver:
         │   └── 大创通知/
     """
 
-    VALID_CATEGORIES = {"课件", "作业", "竞赛通知", "考试通知", "参考资料", "大创通知", "待确认"}
+    VALID_CATEGORIES = set(CATEGORIES)
 
     def __init__(self, base_dir: str | Path, file_ops: FileOps) -> None:
         self.base_dir = Path(base_dir)
