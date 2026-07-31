@@ -39,6 +39,7 @@ __paddle__/
 logs/
 *.log
 *.ics
-# 测试结果 JSON 不入库（分类 / 实体 / 里程碑 / 命名四份）
+# 测试结果 JSON 不入库（分类 / 实体 / 里程碑 / 命名四份 + W4 联调）
 test_*result*.json
+*_result.json
 filemate.db*
