@@ -103,7 +103,7 @@ class Namer:
         return raw.replace("-", "")[:6] or "待定"
 
     def _maybe_refine_task(self, task: str, category: str, course: str) -> str:
-        """如果 task 过长（> 20 字），尝试用 LLM 精简。"""
+        """如果 task 过长（> 15 字），尝试用 LLM 精简。"""
         if len(task) <= 15:
             return task
         try:
