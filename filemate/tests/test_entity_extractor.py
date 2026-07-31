@@ -121,13 +121,16 @@ class TestEntityExtractorExtraEntities:
 
 
 class TestEntityExtractorFailure:
-    """LLM 异常/返回非法类型时的兜底。"""
+    """LLM 异常/返回非法类型时的兜底。
+
+    重试次数为 3（W4 联调发现 LLM 高频返回空字符串，原 2 次顶不住）。
+    """
 
     def test_exception_returns_empty_after_retry(self) -> None:
         stub = _Stub(raises=RuntimeError("API 超时"))
         result = EntityExtractor(stub).extract("正文")
 
-        assert stub.calls == 2, "应重试一次（共 2 次尝试）"
+        assert stub.calls == 3, "应重试两次（共 3 次尝试）"
         assert result["extra_entities"] == {}
         for field in ENTITY_FIELDS[:-1]:
             assert result[field] is None
@@ -137,6 +140,48 @@ class TestEntityExtractorFailure:
         stub = _Stub(payload=bad_payload)
         result = EntityExtractor(stub).extract("正文")
 
-        assert stub.calls == 2, "非字典返回应触发重试"
+        assert stub.calls == 3, "非字典返回应触发重试至上限"
         for field in ENTITY_FIELDS[:-1]:
             assert result[field] is None
+
+
+class TestEntityExtractorFlatten:
+    """extra_entities 必须压平成一层，否则会撑爆 max_tokens 导致 JSON 截断。"""
+
+    def test_nested_dict_flattened(self) -> None:
+        payload = {**_FULL_PAYLOAD, "extra_entities": {
+            "organizer": "校团委",
+            "contact": {"name": "张老师", "phone": "123"},
+        }}
+        result = EntityExtractor(_Stub(payload=payload)).extract("正文")
+        extra = result["extra_entities"]
+
+        assert extra["organizer"] == "校团委"
+        assert extra["contact.name"] == "张老师"
+        assert extra["contact.phone"] == "123"
+        assert "contact" not in extra, "嵌套子对象本身不应保留"
+
+    def test_list_joined(self) -> None:
+        payload = {**_FULL_PAYLOAD, "extra_entities": {"tags": ["竞赛", "校级", "报名"]}}
+        result = EntityExtractor(_Stub(payload=payload)).extract("正文")
+        assert result["extra_entities"]["tags"] == "竞赛, 校级, 报名"
+
+    def test_scalar_untouched(self) -> None:
+        payload = {**_FULL_PAYLOAD, "extra_entities": {"count": 3, "name": "x"}}
+        result = EntityExtractor(_Stub(payload=payload)).extract("正文")
+        assert result["extra_entities"] == {"count": 3, "name": "x"}
+
+    @pytest.mark.parametrize("bad", [None, [], "字符串", 42, 0])
+    def test_non_dict_extra_becomes_empty(self, bad) -> None:
+        payload = {**_FULL_PAYLOAD, "extra_entities": bad}
+        result = EntityExtractor(_Stub(payload=payload)).extract("正文")
+        assert result["extra_entities"] == {}
+
+    def test_flattened_result_has_no_nested_values(self) -> None:
+        """压平后不应再有任何 dict 类型的值 —— 这是 Namer 能安全读取的前提。"""
+        payload = {**_FULL_PAYLOAD, "extra_entities": {
+            "a": {"b": "c"}, "d": ["e", "f"], "g": "h",
+        }}
+        result = EntityExtractor(_Stub(payload=payload)).extract("正文")
+        for key, val in result["extra_entities"].items():
+            assert not isinstance(val, (dict, list)), f"{key} 仍是嵌套结构: {val!r}"

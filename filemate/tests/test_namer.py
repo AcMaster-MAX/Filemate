@@ -162,6 +162,86 @@ class TestNamerSanitize:
         assert "[操作 系统]" in name
 
 
+class TestNamerOrganizerFallback:
+    """course 缺失时回退到 extra_entities 里的主办方。
+
+    竞赛/大创/行政通知本身没有课程名，直接填「未分类」会让文件名对用户失去
+    意义（W4 联调实测：20 份中 11 份第一段为「未分类」）。
+    """
+
+    def test_organizer_used_when_course_empty(self) -> None:
+        namer, _ = _make_namer()
+        name = namer.generate(
+            category="竞赛通知", course="", task="ACM挑战赛", deadline="2026-04-15",
+            extra_entities={"organizer": "校团委"},
+        )
+        assert name == "[校团委]-[竞赛通知]-[ACM挑战赛]-[0415]-[待处理]"
+        assert "未分类" not in name
+
+    def test_course_wins_over_organizer(self) -> None:
+        """course 有值时不应被主办方覆盖。"""
+        namer, _ = _make_namer()
+        name = namer.generate(
+            category="作业", course="操作系统", task="实验三", deadline="0415",
+            extra_entities={"organizer": "校团委"},
+        )
+        assert "[操作系统]" in name
+        assert "校团委" not in name
+
+    @pytest.mark.parametrize(
+        "key", ["organizer", "主办方", "主办单位", "发文单位", "publisher", "host"]
+    )
+    def test_alternative_key_names(self, key: str) -> None:
+        """LLM 用词不统一，多种键名都要认。"""
+        namer, _ = _make_namer()
+        name = namer.generate(
+            category="竞赛通知", course="", task="比赛", deadline="",
+            extra_entities={key: "校团委"},
+        )
+        assert "[校团委]" in name
+
+    def test_long_organizer_truncated(self) -> None:
+        namer, _ = _make_namer()
+        name = namer.generate(
+            category="竞赛通知", course="", task="比赛", deadline="",
+            extra_entities={"organizer": "安徽理工大学计算机科学与工程学院团务委员会"},
+        )
+        assert NAME_PATTERN.match(name)
+        assert len(name) <= MAX_LEN
+        # 截断到 12 字
+        assert "[安徽理工大学计算机科学与]" in name
+
+    def test_brackets_in_organizer_cleaned(self) -> None:
+        namer, _ = _make_namer()
+        name = namer.generate(
+            category="竞赛通知", course="", task="比赛", deadline="",
+            extra_entities={"organizer": "[校团委]"},
+        )
+        assert name == "[校团委]-[竞赛通知]-[比赛]-[待定]-[待处理]"
+        assert NAME_PATTERN.match(name)
+
+    @pytest.mark.parametrize(
+        "extra",
+        [None, {}, {"contact": "123"}, {"organizer": ""}, {"organizer": "   "},
+         {"organizer": None}, {"organizer": 123}, "不是字典"],
+    )
+    def test_falls_back_to_placeholder(self, extra) -> None:
+        """挑不到主办方时仍回落「未分类」，不能抛异常。"""
+        namer, _ = _make_namer()
+        name = namer.generate(
+            category="竞赛通知", course="", task="比赛", deadline="",
+            extra_entities=extra,
+        )
+        assert "[未分类]" in name
+        assert NAME_PATTERN.match(name)
+
+    def test_extra_entities_optional(self) -> None:
+        """不传 extra_entities 时行为与旧版一致（向后兼容）。"""
+        namer, _ = _make_namer()
+        name = namer.generate(category="竞赛通知", course="", task="比赛", deadline="")
+        assert name == "[未分类]-[竞赛通知]-[比赛]-[待定]-[待处理]"
+
+
 class TestNamerTruncation:
     """超长处理。"""
 
