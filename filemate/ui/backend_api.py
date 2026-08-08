@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from filemate.core.session import ProcessingSession, SessionStatus
+from filemate.study import StudyService
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +293,75 @@ class BackendAPI:
 
         logger.info("confirm: session %s accepted=%s", session_id, accepted)
         return {"ok": True, "session_id": session_id, "accepted": accepted}
+
+    # =========================================================================
+    # 文件出题与错题本
+    # =========================================================================
+
+    def _study(self) -> StudyService:
+        return StudyService(db_path=self.db_path)
+
+    def upload_study_file(self, file_path: str) -> dict[str, Any]:
+        """上传学习资料。"""
+        return self._study().upload_file(file_path)
+
+    def list_study_documents(self) -> list[dict[str, Any]]:
+        return self._study().list_documents()
+
+    def delete_study_document(self, document_id: int) -> bool:
+        return self._study().delete_document(document_id)
+
+    def cleanup_study_documents(self) -> int:
+        return self._study().cleanup_expired_documents()
+
+    def parse_study_document(self, document_id: int) -> dict[str, Any]:
+        return self._study().parse_document(document_id)
+
+    def analyze_study_document(self, document_id: int) -> dict[str, Any]:
+        return self._study().analyze_document(document_id)
+
+    def generate_study_questions(
+        self,
+        document_id: int,
+        plan: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return self._study().generate_file_questions(document_id, plan)
+
+    def list_study_questions(self) -> list[dict[str, Any]]:
+        return self._study().list_questions()
+
+    def get_study_question(self, question_id: int) -> dict[str, Any] | None:
+        return self._study().get_question(question_id)
+
+    def generate_more_study_questions(
+        self, question_id: int, count: int = 3
+    ) -> list[dict[str, Any]]:
+        return self._study().generate_more_questions(question_id, count=count)
+
+    def submit_study_answer(
+        self, question_id: int, user_answer: str
+    ) -> dict[str, Any]:
+        return self._study().submit_answer(question_id, user_answer)
+
+    def list_study_wrong_book(self) -> list[dict[str, Any]]:
+        return self._study().list_wrong_book()
+
+    def list_study_due_reviews(self) -> list[dict[str, Any]]:
+        return self._study().list_due_reviews()
+
+    def review_study_wrong_item(self, item_id: int) -> dict[str, Any]:
+        return self._study().review_wrong_item(item_id)
+
+    def master_study_wrong_item(self, item_id: int) -> dict[str, Any]:
+        return self._study().master_wrong_item(item_id)
+
+    def favorite_study_question(
+        self, question_id: int, is_favorite: bool
+    ) -> bool:
+        return self._study().favorite_question(question_id, is_favorite)
+
+    def delete_study_question(self, question_id: int) -> bool:
+        return self._study().delete_question(question_id)
 
 
 # =========================================================================

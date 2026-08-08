@@ -6,6 +6,7 @@ Schema 与《项目总纲 v1.0》§3.6 对齐。
 from __future__ import annotations
 
 import sqlite3
+import json
 import threading
 import time
 import functools
@@ -97,6 +98,82 @@ CREATE INDEX IF NOT EXISTS idx_sessions_status    ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_created   ON sessions(created_at);
 CREATE INDEX IF NOT EXISTS idx_operation_log_sid  ON operation_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_operation_log_ts   ON operation_log(created_at);
+
+-- 文件出题与错题本
+CREATE TABLE IF NOT EXISTS documents (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          TEXT NOT NULL DEFAULT 'local',
+    filename         TEXT NOT NULL,
+    file_type        TEXT NOT NULL,
+    storage_path     TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'uploaded',
+    chunks_count     INTEGER NOT NULL DEFAULT 0,
+    size_bytes       INTEGER NOT NULL DEFAULT 0,
+    temp_cleanup_at  TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id   INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_index   INTEGER NOT NULL,
+    content       TEXT NOT NULL,
+    metadata_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS file_analyze_results (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL UNIQUE REFERENCES documents(id) ON DELETE CASCADE,
+    menu_json   TEXT NOT NULL,
+    message     TEXT DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+);
+
+CREATE TABLE IF NOT EXISTS questions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL DEFAULT 'local',
+    document_id     INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    subject         TEXT DEFAULT '',
+    knowledge_point TEXT DEFAULT '',
+    question_type   TEXT NOT NULL,
+    stem            TEXT NOT NULL,
+    options_json    TEXT DEFAULT '[]',
+    answer          TEXT DEFAULT '',
+    analysis        TEXT DEFAULT '',
+    source          TEXT DEFAULT 'ai',
+    is_favorite     INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+);
+
+CREATE TABLE IF NOT EXISTS answer_records (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL DEFAULT 'local',
+    question_id   INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    user_answer   TEXT DEFAULT '',
+    is_correct    INTEGER NOT NULL DEFAULT 0,
+    spent_seconds INTEGER DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+);
+
+CREATE TABLE IF NOT EXISTS wrong_book_items (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          TEXT NOT NULL DEFAULT 'local',
+    question_id      INTEGER NOT NULL UNIQUE REFERENCES questions(id) ON DELETE CASCADE,
+    mistake_reason   TEXT DEFAULT '',
+    review_count     INTEGER NOT NULL DEFAULT 0,
+    mastered         INTEGER NOT NULL DEFAULT 0,
+    review_stage     INTEGER NOT NULL DEFAULT 1,
+    next_review_date TEXT NOT NULL,
+    last_reviewed_at TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_user       ON documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_doc  ON knowledge_chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_questions_user        ON questions(user_id);
+CREATE INDEX IF NOT EXISTS idx_answer_records_user   ON answer_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_wrong_book_user       ON wrong_book_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_wrong_book_due        ON wrong_book_items(user_id, mastered, next_review_date);
 """
 
 
@@ -106,6 +183,15 @@ _ALLOWED_SESSION_COLS = {
     "entities", "milestones", "error", "user_modified",
 }
 _ALLOWED_RULE_COLS = {"pattern", "replacement", "priority", "enabled"}
+_ALLOWED_STUDY_DOC_COLS = {"status", "chunks_count", "filename", "temp_cleanup_at"}
+_ALLOWED_WRONG_BOOK_COLS = {
+    "mistake_reason",
+    "review_count",
+    "mastered",
+    "review_stage",
+    "next_review_date",
+    "last_reviewed_at",
+}
 
 
 class SQLiteStorage:
@@ -371,5 +457,369 @@ class SQLiteStorage:
         rows = conn.execute(
             f"SELECT * FROM user_rules{where} ORDER BY priority DESC",
             params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # 文件出题：documents / knowledge_chunks / file_analyze_results
+    # ------------------------------------------------------------------
+
+    @_retry_on_lock()
+    def create_study_document(
+        self,
+        *,
+        user_id: str,
+        filename: str,
+        file_type: str,
+        storage_path: str,
+        size_bytes: int,
+        temp_cleanup_at: str | None = None,
+    ) -> int:
+        """新增上传文档，返回 document id。"""
+        conn = self._conn()
+        cur = conn.execute(
+            """INSERT INTO documents
+               (user_id, filename, file_type, storage_path, size_bytes, temp_cleanup_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, filename, file_type, storage_path, size_bytes, temp_cleanup_at),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def list_study_documents(self, user_id: str) -> list[dict[str, Any]]:
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT * FROM documents WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_study_document(
+        self, document_id: int, user_id: str
+    ) -> dict[str, Any] | None:
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM documents WHERE id=? AND user_id=?",
+            (document_id, user_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    @_retry_on_lock()
+    def update_study_document(self, document_id: int, **kwargs: Any) -> bool:
+        if not kwargs:
+            return False
+        invalid = set(kwargs) - _ALLOWED_STUDY_DOC_COLS
+        if invalid:
+            raise ValueError(
+                f"无效字段: {sorted(invalid)}，允许: {sorted(_ALLOWED_STUDY_DOC_COLS)}"
+            )
+        set_clause = ", ".join(f"{k}=?" for k in kwargs)
+        values = list(kwargs.values()) + [document_id]
+        conn = self._conn()
+        cur = conn.execute(
+            f"UPDATE documents SET {set_clause} WHERE id=?", values
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    @_retry_on_lock()
+    def delete_study_document(self, document_id: int, user_id: str) -> bool:
+        """删除文档及其切片/分析结果，题目保留但解除文档关联。"""
+        conn = self._conn()
+        conn.execute(
+            "UPDATE questions SET document_id=NULL WHERE document_id=?",
+            (document_id,),
+        )
+        conn.execute(
+            "DELETE FROM file_analyze_results WHERE document_id=?", (document_id,)
+        )
+        conn.execute(
+            "DELETE FROM knowledge_chunks WHERE document_id=?", (document_id,)
+        )
+        cur = conn.execute(
+            "DELETE FROM documents WHERE id=? AND user_id=?", (document_id, user_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def list_expired_documents(
+        self, user_id: str, today: str
+    ) -> list[dict[str, Any]]:
+        """查询临时文件已过期的文档。"""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT * FROM documents WHERE user_id=? AND temp_cleanup_at IS NOT NULL AND temp_cleanup_at <= ?",
+            (user_id, today),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    @_retry_on_lock()
+    def add_knowledge_chunks(self, document_id: int, chunks: list[str]) -> int:
+        conn = self._conn()
+        rows = [
+            (document_id, index, content)
+            for index, content in enumerate(chunks)
+        ]
+        conn.executemany(
+            "INSERT INTO knowledge_chunks (document_id, chunk_index, content) VALUES (?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+        return len(rows)
+
+    def get_knowledge_chunks(
+        self,
+        document_id: int,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        conn = self._conn()
+        if limit is None:
+            rows = conn.execute(
+                "SELECT * FROM knowledge_chunks WHERE document_id=? ORDER BY chunk_index",
+                (document_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM knowledge_chunks WHERE document_id=? ORDER BY chunk_index LIMIT ? OFFSET ?",
+                (document_id, limit, offset),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    @_retry_on_lock()
+    def delete_knowledge_chunks(self, document_id: int) -> int:
+        conn = self._conn()
+        cur = conn.execute(
+            "DELETE FROM knowledge_chunks WHERE document_id=?", (document_id,)
+        )
+        conn.commit()
+        return cur.rowcount
+
+    @_retry_on_lock()
+    def save_file_analyze_result(
+        self, document_id: int, menu_json: str, message: str
+    ) -> None:
+        conn = self._conn()
+        conn.execute(
+            """INSERT INTO file_analyze_results (document_id, menu_json, message)
+               VALUES (?, ?, ?)
+               ON CONFLICT(document_id) DO UPDATE SET
+                   menu_json=excluded.menu_json,
+                   message=excluded.message,
+                   created_at=strftime('%Y-%m-%dT%H:%M:%S','now')""",
+            (document_id, menu_json, message),
+        )
+        conn.commit()
+
+    def get_file_analyze_result(
+        self, document_id: int
+    ) -> dict[str, Any] | None:
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM file_analyze_results WHERE document_id=?",
+            (document_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # 出题：questions
+    # ------------------------------------------------------------------
+
+    @_retry_on_lock()
+    def save_questions(self, rows: list[dict[str, Any]]) -> list[int]:
+        """批量保存题目，返回 question id 列表。"""
+        ids: list[int] = []
+        conn = self._conn()
+        for row in rows:
+            cur = conn.execute(
+                """INSERT INTO questions
+                   (user_id, document_id, subject, knowledge_point, question_type,
+                    stem, options_json, answer, analysis, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row.get("user_id", "local"),
+                    row.get("document_id"),
+                    row.get("subject", ""),
+                    row.get("knowledge_point", ""),
+                    row.get("question_type", "choice"),
+                    row.get("stem", ""),
+                    row.get("options_json", "[]"),
+                    row.get("answer", ""),
+                    row.get("analysis", ""),
+                    row.get("source", "ai"),
+                ),
+            )
+            ids.append(int(cur.lastrowid))
+        conn.commit()
+        return ids
+
+    def list_questions(
+        self, user_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT * FROM questions WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [self._question_to_dict(r) for r in rows]
+
+    def get_question(
+        self, question_id: int, user_id: str
+    ) -> dict[str, Any] | None:
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM questions WHERE id=? AND user_id=?",
+            (question_id, user_id),
+        ).fetchone()
+        return self._question_to_dict(row) if row else None
+
+    @staticmethod
+    def _question_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        data = dict(row)
+        try:
+            data["options"] = json.loads(data.get("options_json") or "[]")
+        except json.JSONDecodeError:
+            data["options"] = []
+        return data
+
+    @_retry_on_lock()
+    def set_question_favorite(
+        self, question_id: int, user_id: str, is_favorite: int
+    ) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE questions SET is_favorite=? WHERE id=? AND user_id=?",
+            (is_favorite, question_id, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    @_retry_on_lock()
+    def delete_question(self, question_id: int, user_id: str) -> bool:
+        conn = self._conn()
+        conn.execute("DELETE FROM answer_records WHERE question_id=?", (question_id,))
+        conn.execute("DELETE FROM wrong_book_items WHERE question_id=?", (question_id,))
+        cur = conn.execute(
+            "DELETE FROM questions WHERE id=? AND user_id=?", (question_id, user_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # 作答与错题本
+    # ------------------------------------------------------------------
+
+    @_retry_on_lock()
+    def add_answer_record(
+        self,
+        user_id: str,
+        question_id: int,
+        user_answer: str,
+        is_correct: int,
+        spent_seconds: int = 0,
+    ) -> int:
+        conn = self._conn()
+        cur = conn.execute(
+            """INSERT INTO answer_records
+               (user_id, question_id, user_answer, is_correct, spent_seconds)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, question_id, user_answer, is_correct, spent_seconds),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    @_retry_on_lock()
+    def add_wrong_book_item(
+        self,
+        *,
+        user_id: str,
+        question_id: int,
+        mistake_reason: str,
+        next_review_date: str,
+    ) -> int:
+        conn = self._conn()
+        cur = conn.execute(
+            """INSERT INTO wrong_book_items
+               (user_id, question_id, mistake_reason, next_review_date)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(question_id) DO UPDATE SET
+                   mistake_reason=excluded.mistake_reason,
+                   next_review_date=excluded.next_review_date""",
+            (user_id, question_id, mistake_reason, next_review_date),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def get_wrong_book_item(
+        self, user_id: str, question_id: int
+    ) -> dict[str, Any] | None:
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM wrong_book_items WHERE user_id=? AND question_id=?",
+            (user_id, question_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_wrong_book_item_by_id(
+        self, item_id: int, user_id: str
+    ) -> dict[str, Any] | None:
+        conn = self._conn()
+        row = conn.execute(
+            """SELECT w.*, q.subject AS subject, q.knowledge_point AS knowledge_point,
+                      q.question_type AS question_type, q.stem AS question_stem,
+                      q.answer AS correct_answer, q.analysis AS analysis
+               FROM wrong_book_items w
+               JOIN questions q ON q.id = w.question_id
+               WHERE w.id=? AND w.user_id=?""",
+            (item_id, user_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    @_retry_on_lock()
+    def update_wrong_book_item(self, item_id: int, **kwargs: Any) -> bool:
+        if not kwargs:
+            return False
+        invalid = set(kwargs) - _ALLOWED_WRONG_BOOK_COLS
+        if invalid:
+            raise ValueError(
+                f"无效字段: {sorted(invalid)}，允许: {sorted(_ALLOWED_WRONG_BOOK_COLS)}"
+            )
+        set_clause = ", ".join(f"{k}=?" for k in kwargs)
+        values = list(kwargs.values()) + [item_id]
+        conn = self._conn()
+        cur = conn.execute(
+            f"UPDATE wrong_book_items SET {set_clause} WHERE id=?", values
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def list_wrong_book(self, user_id: str) -> list[dict[str, Any]]:
+        conn = self._conn()
+        rows = conn.execute(
+            """SELECT w.*, q.subject AS subject, q.knowledge_point AS knowledge_point,
+                      q.question_type AS question_type, q.stem AS question_stem,
+                      q.answer AS correct_answer, q.analysis AS analysis
+               FROM wrong_book_items w
+               JOIN questions q ON q.id = w.question_id
+               WHERE w.user_id=?
+               ORDER BY w.created_at DESC""",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_due_wrong_book(
+        self, user_id: str, today: str
+    ) -> list[dict[str, Any]]:
+        conn = self._conn()
+        rows = conn.execute(
+            """SELECT w.*, q.subject AS subject, q.knowledge_point AS knowledge_point,
+                      q.question_type AS question_type, q.stem AS question_stem,
+                      q.answer AS correct_answer, q.analysis AS analysis
+               FROM wrong_book_items w
+               JOIN questions q ON q.id = w.question_id
+               WHERE w.user_id=? AND w.mastered=0 AND w.next_review_date <= ?
+               ORDER BY w.next_review_date ASC""",
+            (user_id, today),
         ).fetchall()
         return [dict(r) for r in rows]
