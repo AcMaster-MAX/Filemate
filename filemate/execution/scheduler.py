@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,8 @@ class CalendarBuilder:
         """
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
             try:
-                return datetime.strptime(value, fmt)
+                local_timezone = datetime.now(tz=timezone.utc).astimezone().tzinfo
+                return datetime.strptime(value, fmt).replace(tzinfo=local_timezone)
             except ValueError:
                 continue
         raise ValueError(

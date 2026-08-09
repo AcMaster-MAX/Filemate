@@ -29,24 +29,18 @@ from pathlib import Path
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
+    except (AttributeError, OSError, ValueError):
         pass
 
+from filemate.core.session import ProcessingSession, SessionStatus
+from filemate.execution.archiver import Archiver
+from filemate.execution.file_ops import FileOps
+from filemate.execution.scheduler import CalendarBuilder, CalendarEvent
+from filemate.execution.storage import SQLiteStorage
 from filemate.llm_client import LLMClient, LLMConfig
 from filemate.perception import FileParser
 from filemate.perception.ocr import OCRBackend
-from filemate.understanding import (
-    Classifier,
-    EntityExtractor,
-    MilestoneDetector,
-    Namer,
-)
-from filemate.execution.scheduler import CalendarBuilder, CalendarEvent
-from filemate.execution.file_ops import FileOps, OpResult
-from filemate.execution.archiver import Archiver
-from filemate.execution.storage import SQLiteStorage
-from filemate.core.session import ProcessingSession, SessionStatus
-from filemate.core.pipeline import PipelineWorker
+from filemate.understanding import Classifier, EntityExtractor, MilestoneDetector, Namer
 
 logger = logging.getLogger(__name__)
 
@@ -153,24 +147,35 @@ def _make_stages(
     generate_name.__name__ = "generate_name"  # type: ignore[attr-defined]
     stages.append(generate_name)
 
-    # 阶段 6：日历
+    # 阶段 6：只生成日历预览；真正写盘与归档由确认执行器原子完成
     if not skip_calendar:
         def calendar_(session: ProcessingSession) -> ProcessingSession:
-            events = []
+            events: list[dict[str, str]] = []
             for m in session.milestones:
-                events.append(CalendarEvent(
-                    summary=f"[{session.category}] {m.get('event', '')}",
-                    start=m.get("date", ""),
-                    description=f"来源: {Path(session.source_path).name}",
-                ))
-            if events:
-                out = Path(session.source_path).with_suffix(".ics")
-                calendar.save(events, out)
-                session.entities["ics_path"] = str(out)
-                storage.log_operation(session.session_id, "calendar", str(out))
+                events.append(
+                    {
+                        "summary": f"[{session.category}] {m.get('event', '')}",
+                        "start": m.get("date", ""),
+                        "description": f"来源: {Path(session.source_path).name}",
+                    }
+                )
+            session.entities["calendar_enabled"] = True
+            session.entities["calendar_preview"] = events
+            storage.log_operation(
+                session.session_id,
+                "calendar_preview",
+                f"{len(events)} events",
+            )
             return session
         calendar_.__name__ = "calendar"  # type: ignore[attr-defined]
         stages.append(calendar_)
+    else:
+        def disable_calendar(session: ProcessingSession) -> ProcessingSession:
+            session.entities["calendar_enabled"] = False
+            session.entities["calendar_preview"] = []
+            return session
+        disable_calendar.__name__ = "calendar_disabled"  # type: ignore[attr-defined]
+        stages.append(disable_calendar)
 
     # 阶段 7：归档（用户确认后才真正移动，此处只做预览）
     # 实际移动逻辑在确认层，此处留空占位
@@ -243,7 +248,7 @@ async def process_single(
     file_ops = FileOps()
     storage = SQLiteStorage(db_path)
     storage.init_schema()  # 初始化数据库表
-    archiver = Archiver(Path(".").resolve() / "archive", file_ops)
+    archiver = Archiver(Path.cwd() / "archive", file_ops)
 
     # 构造 session
     session_id = uuid.uuid4().hex[:12]
@@ -260,7 +265,7 @@ async def process_single(
     for stage in stages:
         try:
             session = stage(session)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - 阶段边界必须收敛第三方异常
             session.error = f"{getattr(stage, '__name__', 'unknown')} 失败: {exc}"
             session.transition(SessionStatus.FAILED)
             logger.error("[%s] 阶段失败: %s", session.session_id, session.error)
@@ -387,7 +392,7 @@ def _run_check(db_path: str) -> bool:
         row = storage.get_session(sid)
         assert row is not None and row["category"] == "课件"
         print("OK")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 自检需汇总所有模块错误
         print(f"FAIL: {exc}")
         all_ok = False
 
@@ -407,7 +412,7 @@ def _run_check(db_path: str) -> bool:
             res = ops.delete(Path(td) / "renamed.txt")
             assert res.success
         print("OK")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 自检需汇总所有模块错误
         print(f"FAIL: {exc}")
         all_ok = False
 
@@ -423,7 +428,7 @@ def _run_check(db_path: str) -> bool:
         assert b"BEGIN:VCALENDAR" in data
         assert b"SUMMARY:" in data
         print("OK")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 自检需汇总所有模块错误
         print(f"FAIL: {exc}")
         all_ok = False
 
@@ -441,7 +446,7 @@ def _run_check(db_path: str) -> bool:
             dest = base / "操作系统" / "作业" / "[操作系统]-[作业]-[习题].docx"
             assert dest.exists()
         print("OK")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 自检需汇总所有模块错误
         print(f"FAIL: {exc}")
         all_ok = False
 
@@ -458,7 +463,7 @@ def _run_check(db_path: str) -> bool:
         latest = ops_log[-1]
         assert latest.get("input_snapshot") is not None or "input_snapshot" in str(ops_log)
         print("OK")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 自检需汇总所有模块错误
         print(f"FAIL: {exc}")
         all_ok = False
 

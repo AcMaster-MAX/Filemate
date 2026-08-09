@@ -312,32 +312,20 @@ storage = SQLiteStorage(db_path="filemate.db")
 storage.init_schema()
 ```
 
-**表结构（四张表 + 索引）：**
+**数据库版本：** `schema_migrations` 记录已应用迁移，当前 schema 为 v2。`init_schema()` 可对旧数据库安全、幂等升级。
 
-```
-sessions
-  session_id TEXT PK, source_path TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK(status IN ('pending','processing','done','confirmed','skipped','expired','failed')),
-  category TEXT, confidence REAL, suggested_name TEXT,
-  entities TEXT (JSON), milestones TEXT (JSON),
-  error TEXT, created_at TEXT, updated_at TEXT
+**核心表：**
 
-processed_files
-  file_hash TEXT PK, session_id TEXT REFERENCES sessions, first_seen TEXT
-
-operation_log
-  id INTEGER PK AI, session_id TEXT REFERENCES sessions,
-  op TEXT NOT NULL, detail TEXT DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-
-user_rules
-  id INTEGER PK AI, category TEXT NOT NULL, keyword TEXT NOT NULL,
-  weight REAL NOT NULL DEFAULT 1.0, active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT
-```
-
-**索引：** `idx_sessions_status`, `idx_operation_log_sid`
+| 表 | 说明 |
+|---|---|
+| `sessions` | 文件处理生命周期、分类、实体、里程碑与人工修改状态 |
+| `processed_files` | SHA-256 去重记录与处理次数 |
+| `operation_log` | 操作、人工覆盖、模型、延迟与 token 审计信息 |
+| `user_rules` | 分类覆盖、命名模板、课程别名等规则 |
+| `workspaces` | 用户学习工作区，默认包含 `local` |
+| `sources` | 统一资料源、解析正文、媒体类型与元数据 |
+| `artifacts` | 摘要、知识卡、题目、笔记、学习计划等 AI 产物 |
+| `document_contexts` | 持久化文档上下文、聊天历史与可选过期时间 |
 
 **线程安全：** 每个线程持有独立 `sqlite3.Connection`，WAL 模式，`foreign_keys=ON`。
 
@@ -345,21 +333,73 @@ user_rules
 
 | 方法 | 签名 | 说明 |
 |---|---|---|
-| `init_schema` | `() -> None` | 建表（幂等） |
+| `init_schema` | `() -> None` | 应用版本迁移（幂等） |
+| `get_schema_version` | `() -> int` | 读取当前数据库版本 |
 | `create_session` | `(session_id: str, source_path: str) -> None` | 插入新 session |
 | `update_session` | `(session_id: str, **kwargs) -> None` | 更新任意字段（自动写 `updated_at`） |
 | `get_session` | `(session_id: str) -> dict \| None` | 按 ID 查询 |
 | `list_sessions` | `(status: str \| None = None) -> list[dict]` | 列表，按 `created_at` 降序 |
 | `is_duplicate` | `(file_hash: str) -> bool` | 文件是否已处理过 |
 | `record_hash` | `(file_hash: str, session_id: str) -> None` | 记录哈希（自动建占位 session） |
-| `log_operation` | `(session_id: str, op: str, detail: str = "") -> None` | 写操作日志 |
+| `log_operation` | `(session_id: str, action: str, detail: str = "", ...) -> int` | 写操作日志并返回 ID |
 | `get_operations` | `(session_id: str) -> list[dict]` | 读操作日志 |
-| `add_rule` | `(category: str, keyword: str, weight: float = 1.0) -> int` | 新增用户规则 |
-| `list_rules` | `(active_only: bool = True) -> list[dict]` | 列出规则 |
+| `add_rule` | `(rule_type: str, pattern: str, replacement: str, priority: int = 0) -> int` | 新增用户规则 |
+| `list_rules` | `(rule_type: str \| None = None, enabled_only: bool = True) -> list[dict]` | 列出规则 |
+| `save_source` | `(*, original_name, source_path, raw_text="", ...) -> str` | 新增或按哈希更新资料源 |
+| `save_artifact` | `(*, artifact_type, content, source_id=None, ...) -> str` | 保存资料派生的 AI 产物 |
+| `save_document_context` | `(*, ctx_id, context_text, ...) -> None` | 保存可恢复问答上下文 |
+| `append_context_messages` | `(ctx_id, messages) -> list[dict]` | 原子追加并返回聊天历史 |
 
 **边界行为：**
 - `update_session` 空 `kwargs` → 无操作
-- `record_hash` 如果 `session_id` 不存在 → 自动插入占位记录（`/test/{session_id}`），避免 FK 报错
+- `record_hash` 如果 `session_id` 不存在 → 自动插入 `__auto_created__` 占位记录，避免 FK 报错
+- 同工作区、同文件哈希会稳定复用同一个 `source_id`
+
+---
+
+## 4.6 AI 学习资产 HTTP API
+
+所有接口使用统一响应：`{"success": bool, "data": any, "error": str | null}`。
+
+HTTP 错误同样保持该结构：参数错误使用 `400/422`，资源不存在使用 `404`，执行冲突使用 `409`，AI 上游失败使用 `502`。前端必须读取 `error` 字段，不依赖 FastAPI 默认的 `detail`。
+
+| 方法 | 路径 | 作用 | 持久化结果 |
+|---|---|---|---|
+| `POST` | `/ai/summarize` | 生成摘要 | `Source + summary Artifact + Context` |
+| `POST` | `/ai/knowledge-cards` | 生成知识卡 | `Source + knowledge_cards Artifact + Context` |
+| `POST` | `/ai/questions` | 生成练习题 | `Source + questions Artifact + Context` |
+| `POST` | `/ai/notes` | 生成结构化笔记 | `Source + notes Artifact + Context` |
+| `POST` | `/ai/study-plan` | 生成个性化复习计划 | `Source + study_plan Artifact + Context` |
+| `POST` | `/ai/chat` | 基于资料连续问答 | 追加 `document_contexts.chat_history` |
+| `GET` | `/knowledge/sources` | 列出本地资料源 | 不返回大段 `raw_text`，返回 `text_length` |
+| `GET` | `/knowledge/sources/{source_id}` | 获取资料源详情 | 包含解析正文与元数据 |
+| `GET` | `/knowledge/sources/{source_id}/artifacts` | 查询资料派生产物 | 支持 `artifact_type` 与 `limit` |
+
+AI 生成接口成功时同时返回 `ctx_id`、`source_id`、`artifact_id`。服务重启后，这三个标识仍然有效。
+
+---
+
+## 4.7 可信确认、执行与撤销 API
+
+分类编辑和最终执行已拆开，避免用户尚未修改文件名时提前移动文件。
+
+| 方法 | 路径 | 作用 | 文件系统副作用 |
+|---|---|---|---|
+| `PATCH` | `/sessions/{session_id}` | 保存分类、名称或实体草稿 | 无 |
+| `POST` | `/sessions/{session_id}/confirm` | `accepted=true` 最终执行；`false` 跳过 | 归档文件，按需生成 `.ics` |
+| `POST` | `/sessions/{session_id}/undo` | 撤销当前已应用执行 | 文件恢复原位置，移除本次 `.ics` |
+| `GET` | `/sessions/{session_id}/executions` | 查询执行、失败与撤销历史 | 无 |
+
+最终确认具备以下不变量：
+
+- 目标文件或日历已存在时拒绝覆盖。
+- 归档和日历任一步失败时自动恢复原文件。
+- 重复确认返回原 `execution_id`，不重复移动。
+- 重复撤销返回已撤销记录，不重复修改文件系统。
+- 文件扩展名不可借重命名改变，目录名和文件名经过路径穿越防护。
+- Session、执行记录和审计日志在同一个 SQLite 事务内完成。
+
+确认响应中的 `execution` 包含 `execution_id`、`status`、`source_path`、`dest_path`、`ics_path`、`can_undo` 和 `idempotent`。
 
 ---
 
@@ -369,3 +409,5 @@ user_rules
 |---|---|---|---|
 | 2026-07-14 | v0.1 | 创建占位文件 | 胡希 |
 | 2026-07-15 | v1.0 | 根据实现写入具体签名 | 胡希 |
+| 2026-08-09 | v1.1 | 增加版本迁移、学习资产持久化与 HTTP API | Codex |
+| 2026-08-09 | v1.2 | 增加确认执行、操作快照、幂等保护与撤销 API | Codex |

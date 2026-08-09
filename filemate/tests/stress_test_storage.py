@@ -91,8 +91,8 @@ def main():
         print(f"\n[FAIL] Stress test failed - {total_errors} errors")
 
     # 验证数据库内容完整性
-    all_sessions = storage.list_sessions()
     expected = WORKERS * ITERATIONS
+    all_sessions = storage.list_sessions(limit=expected)
     print(f"数据库 session 数: {len(all_sessions)}（预期 ≥ {expected}）")
 
     # 清理
