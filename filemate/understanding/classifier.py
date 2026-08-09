@@ -75,10 +75,9 @@ class Classifier:
         if len(runner_up) > 1 and runner_up[0] - runner_up[1] <= 1:
             logger.debug("规则模糊: %s vs 其他，降级 LLM", best)
             return None
-        # PR #4 review: 置信度基础值从 0.70 降到 0.35，单次命中 < 0.45
+        # 规则命中的置信度必须高于 LLM 兜底默认值，且随命中数递增。
         best_score = scores[best]
-        ambiguity = 1.0 if len(scores) == 1 else 0.85
-        confidence = min(ambiguity * (0.35 + best_score * 0.05), 0.55)
+        confidence = min(0.55 + best_score * 0.10, 0.92)
         return best, confidence
 
     # ------------------------------------------------------------------
