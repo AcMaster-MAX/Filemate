@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from filemate.execution.file_ops import FileOps, OpResult
+from filemate.execution.file_ops import FileOps
 
 
 @pytest.fixture()
@@ -56,6 +54,23 @@ class TestMove:
         res = ops.move(src, dst)
         assert res.success
         assert dst.exists()
+
+    def test_move_never_overwrites_existing_target(
+        self,
+        ops: FileOps,
+        tmp: Path,
+    ) -> None:
+        src = tmp / "src.txt"
+        dst = tmp / "dst.txt"
+        src.write_text("source")
+        dst.write_text("destination")
+
+        res = ops.move(src, dst)
+
+        assert not res.success
+        assert "目标已存在" in res.error
+        assert src.read_text() == "source"
+        assert dst.read_text() == "destination"
 
 
 class TestRename:
@@ -150,32 +165,6 @@ class TestCopy:
         assert dst.read_text() == "data"
 
 
-class TestMoveExtra:
-    def test_move_overwrite_existing(self, ops: FileOps, tmp: Path) -> None:
-        """move 到已存在文件 → 应该覆盖（shutil.move 行为）。"""
-        src = tmp / "src.txt"
-        src.write_text("new content")
-        dst = tmp / "dst.txt"
-        dst.write_text("old content")
-        res = ops.move(src, dst)
-        assert res.success
-        assert not src.exists()
-        assert dst.read_text() == "new content"
-
-    def test_move_to_existing_in_subdir(self, ops: FileOps, tmp: Path) -> None:
-        """move 到子目录的同名文件也应覆盖。"""
-        src = tmp / "report.pdf"
-        src.write_text("report v2")
-        sub = tmp / "archive"
-        sub.mkdir()
-        existing = sub / "report.pdf"
-        existing.write_text("report v1")
-        res = ops.move(src, existing)
-        assert res.success
-        assert not src.exists()
-        assert existing.read_text() == "report v2"
-
-
 class TestDelete:
     def test_delete_basic(self, ops: FileOps, tmp: Path) -> None:
         p = tmp / "to_delete.txt"
@@ -233,3 +222,18 @@ class TestFileOpsEdgeCases:
         h = ops.compute_hash(p)
         assert isinstance(h, str)
         assert len(h) == 64
+
+    def test_validate_filename_rejects_traversal(self, ops: FileOps) -> None:
+        with pytest.raises(ValueError, match="路径分隔符"):
+            ops.validate_filename("../secret.pdf")
+
+    def test_validate_filename_rejects_windows_reserved_name(
+        self,
+        ops: FileOps,
+    ) -> None:
+        with pytest.raises(ValueError, match="保留名称"):
+            ops.validate_filename("CON.txt")
+
+    def test_sanitize_course_segment(self, ops: FileOps) -> None:
+        assert ops.sanitize_path_segment("计算机/网络", "未分类") == "计算机-网络"
+        assert ops.sanitize_path_segment("..", "未分类") == "未分类"
