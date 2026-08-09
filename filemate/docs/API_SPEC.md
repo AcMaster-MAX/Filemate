@@ -1,14 +1,16 @@
 # API 规范
 
-> 5 个核心接口的输入输出契约。
+> 核心 Python 模块与现役 HTTP API 的输入输出契约。
 >
 > - 4.1 分类模块接口
 > - 4.2 实体抽取模块接口
 > - 4.3 多里程碑识别模块接口
 > - 4.4 命名生成模块接口
 > - 4.5 执行层接口
+> - 4.6 AI 学习资产 HTTP API
+> - 4.7 可信确认、执行与撤销 API
 >
-> W4 里程碑（2026-08-03）后冻结，变更必须经过胡希。
+> 2026-08-31 初步版本前允许在测试和调用方同步更新的前提下迭代；2026-09-27 Release Candidate 起冻结，后续破坏性变更必须经过项目负责人确认。
 
 ---
 
@@ -44,7 +46,7 @@ classifier = Classifier(llm_client=llm)
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `category` | `str` | 分类结果，取值为 `{"课件", "作业", "竞赛通知", "考试通知", "参考资料", "大创通知", "待确认"}` |
-| `confidence` | `float` | 置信度 `[0.0, 1.0]`；规则命中单次 ≥ 0.83 |
+| `confidence` | `float` | 置信度 `[0.0, 1.0]`；规则命中从 0.65 起，最高 0.92 |
 | `course_name` | `str \| None` | 识别的课程名，未识别则为 `None` |
 | `reason` | `str` | 分类依据（规则命中 / LLM 返回原文） |
 | `method` | `str` | 分类方式：`"rule"` 规则命中 / `"llm"` LLM 推断 / `"none"` 空文本 |
@@ -53,7 +55,7 @@ classifier = Classifier(llm_client=llm)
 
 ```python
 result = classifier.classify(text="实验三：实现一个线程池...", filename="lab3.docx")
-# {"category": "作业", "confidence": 0.83, "course_name": None, "reason": "关键词规则命中"}
+# {"category": "作业", "confidence": 0.75, "course_name": None, "reason": "关键词规则命中"}
 ```
 
 **边界行为：**
@@ -238,7 +240,7 @@ archiver = Archiver(base_dir="./archive", file_ops=FileOps())
 | `category` | `str` | 是 | 课件 / 作业 / 竞赛通知 / 考试通知 / 参考资料 / 大创通知 / 待确认 |
 | `course` | `str` | 是 | 课程名 |
 | `new_name` | `str` | 是 | 目标文件名（不含路径） |
-| `source_path` | `str \| Path \| None` | 否 | 源文件路径，默认取 session 原始路径 |
+| `source_path` | `str \| Path \| None` | 否 | 参数形式为兼容旧调用保留；实际归档必须传入有效源文件路径 |
 
 **Output（`OpResult` dataclass）：**
 
@@ -247,7 +249,6 @@ archiver = Archiver(base_dir="./archive", file_ops=FileOps())
 | `success` | `bool` | 是否成功 |
 | `error` | `str` | 错误信息，成功则为空字符串 |
 | `dest_path` | `str` | 目标路径（绝对路径），失败则为空字符串 |
-| `source_path` | `str` | 源路径 |
 
 **目标路径格式：**
 
@@ -259,7 +260,7 @@ archiver = Archiver(base_dir="./archive", file_ops=FileOps())
 - `category` 不在合法集合 → 强制改为 `"待确认"`
 - `course` 空/None → 归入 `"未分类"` 目录
 - 目标目录不存在 → 自动创建
-- 目标已存在同名文件 → `FileOps.move` 按系统行为处理（Windows 会覆盖，POSIX 会报错）
+- 目标已存在同名文件 → 明确拒绝覆盖并返回失败，源文件保持不变
 
 #### `preview_dest(base_dir, category, course, new_name) -> Path`
 
@@ -293,7 +294,7 @@ builder = CalendarBuilder()
 
 **Output：** `bytes` — `.ics` 文件内容
 
-**依赖：** `icalendar>=6.0`（可选，未安装时 `build()` 抛 `RuntimeError`，`save()` 同理）
+**依赖：** 项目依赖 `icalendar>=6.0`；运行环境缺失时 `build()` 和 `save()` 抛 `RuntimeError`。
 
 #### `save(events, out_path) -> Path`
 
@@ -312,7 +313,7 @@ storage = SQLiteStorage(db_path="filemate.db")
 storage.init_schema()
 ```
 
-**数据库版本：** `schema_migrations` 记录已应用迁移，当前 schema 为 v2。`init_schema()` 可对旧数据库安全、幂等升级。
+**数据库版本：** `schema_migrations` 记录已应用迁移，当前 schema 为 v8。`init_schema()` 可对旧数据库安全、幂等升级。
 
 **核心表：**
 
@@ -326,8 +327,15 @@ storage.init_schema()
 | `sources` | 统一资料源、解析正文、媒体类型与元数据 |
 | `artifacts` | 摘要、知识卡、题目、笔记、学习计划等 AI 产物 |
 | `document_contexts` | 持久化文档上下文、聊天历史与可选过期时间 |
+| `execution_records` | 最终确认、失败、撤销、快照和幂等状态 |
+| `document_chunks` | 带页码和顺序的可引用资料分块 |
+| `quiz_attempts` | 用户作答、得分和反馈证据 |
+| `wrong_questions` | 错题、掌握状态和间隔重复参数 |
+| `interview_sessions` / `interview_turns` | 模拟面试流程与评分记录 |
+| `study_plans` | 学习计划、每日完成状态和考试目标 |
+| `product_feedback` | 匿名产品反馈哈希与统计上下文 |
 
-**线程安全：** 每个线程持有独立 `sqlite3.Connection`，WAL 模式，`foreign_keys=ON`。
+**线程安全：** 每个线程持有独立 `sqlite3.Connection`，开启 WAL、`busy_timeout=10000` 和 `foreign_keys=ON`；写操作由进程内可重入锁串行保护。
 
 #### 常用方法
 
@@ -336,9 +344,9 @@ storage.init_schema()
 | `init_schema` | `() -> None` | 应用版本迁移（幂等） |
 | `get_schema_version` | `() -> int` | 读取当前数据库版本 |
 | `create_session` | `(session_id: str, source_path: str) -> None` | 插入新 session |
-| `update_session` | `(session_id: str, **kwargs) -> None` | 更新任意字段（自动写 `updated_at`） |
+| `update_session` | `(session_id: str, **kwargs) -> None` | 更新允许字段（自动写 `updated_at`） |
 | `get_session` | `(session_id: str) -> dict \| None` | 按 ID 查询 |
-| `list_sessions` | `(status: str \| None = None) -> list[dict]` | 列表，按 `created_at` 降序 |
+| `list_sessions` | `(status: str \| None = None, limit: int = 100) -> list[dict]` | 列表，按 `created_at` 降序 |
 | `is_duplicate` | `(file_hash: str) -> bool` | 文件是否已处理过 |
 | `record_hash` | `(file_hash: str, session_id: str) -> None` | 记录哈希（自动建占位 session） |
 | `log_operation` | `(session_id: str, action: str, detail: str = "", ...) -> int` | 写操作日志并返回 ID |
@@ -411,3 +419,4 @@ AI 生成接口成功时同时返回 `ctx_id`、`source_id`、`artifact_id`。�
 | 2026-07-15 | v1.0 | 根据实现写入具体签名 | 胡希 |
 | 2026-08-09 | v1.1 | 增加版本迁移、学习资产持久化与 HTTP API | Codex |
 | 2026-08-09 | v1.2 | 增加确认执行、操作快照、幂等保护与撤销 API | Codex |
+| 2026-08-09 | v1.3 | 校准当前 v8 数据模型、归档冲突策略与线程安全说明 | Codex |
