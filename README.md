@@ -232,6 +232,7 @@ FileMate/
 │   ├── llm_client/                   # LLM 配置、Provider 和统一调用封装
 │   ├── perception/                   # 文件解析、OCR、watcher、解析器注册
 │   ├── understanding/                # 分类、实体、里程碑、命名、检索、AI 工具、面试
+│   ├── study/                        # 文本切片、题目规范化、判题与复习排期纯函数
 │   ├── execution/                    # SQLite、文件操作、日历、归档、确认执行和撤销
 │   ├── ui/                           # 旧 Gradio 兼容入口与后端桥接；非主前端
 │   ├── tests/                        # 单元、集成、压力和可选 e2e 测试
@@ -251,6 +252,7 @@ FileMate/
 |---|---|---|
 | `perception` | 文件格式判断、正文和元数据提取、OCR 回退 | 分类、文件移动、UI 状态 |
 | `understanding` | 分类、实体、命名、检索、AI 学习内容和评分 | 直接写磁盘或直接操作 HTTP |
+| `study` | 可复用的切片、出题结果规范化、判题和复习排期算法 | 自建重复数据库表或直接绑定某个 UI |
 | `execution` | 持久化、文件归档、日历、事务式确认和撤销 | Prompt 和页面渲染 |
 | `core` | Session 状态、Pipeline 编排、Agent 协调、注册表 | 具体业务页面与外部供应商细节 |
 | `server.py` | HTTP 合同、参数校验、服务编排、统一错误 | 重复实现底层领域算法 |

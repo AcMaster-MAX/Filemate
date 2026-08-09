@@ -38,6 +38,8 @@ jobs:
           filemate/tests/test_confirmation_executor.py
           filemate/tests/test_server_persistence.py
           filemate/tests/test_retrieval.py
+          filemate/tests/test_study.py
+          filemate/study
           filemate/understanding/interview.py
           filemate/understanding/retrieval.py
           evaluation/run_evaluation.py
