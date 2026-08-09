@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 GENERATE_SYSTEM_PROMPT = (
     "你是高校出题专家。根据学科、知识点和参考资料生成练习题，"
@@ -27,6 +27,8 @@ ANALYZE_SYSTEM_PROMPT = (
 
 def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:
     """按段落聚合切片，避免知识被切断。"""
+    if chunk_size < 1 or overlap < 0 or overlap >= chunk_size:
+        raise ValueError("chunk_size 必须大于 0，overlap 必须在 [0, chunk_size) 内")
     text = text.strip()
     if not text:
         return []
@@ -39,11 +41,14 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str
             continue
         if buffer:
             chunks.append(buffer)
+            buffer = ""
         if len(paragraph) > chunk_size:
             start = 0
             while start < len(paragraph):
                 end = min(start + chunk_size, len(paragraph))
                 chunks.append(paragraph[start:end])
+                if end >= len(paragraph):
+                    break
                 start = end - overlap if end - overlap > start else end
         else:
             buffer = paragraph
@@ -64,15 +69,22 @@ def _normalize(
         if not isinstance(item, dict) or not item.get("stem"):
             continue
         options = item.get("options") if isinstance(item.get("options"), list) else []
-        questions.append({
-            "subject": str(item.get("subject", subject)).strip() or subject,
-            "knowledge_point": str(item.get("knowledge_point", knowledge_point)).strip() or knowledge_point,
-            "question_type": str(item.get("question_type", "choice")).strip() or "choice",
-            "stem": str(item["stem"]).strip(),
-            "options": [str(opt).strip() for opt in options if str(opt).strip()],
-            "answer": str(item.get("answer", "")).strip(),
-            "analysis": str(item.get("analysis", "")).strip(),
-        })
+        questions.append(
+            {
+                "subject": str(item.get("subject", subject)).strip() or subject,
+                "knowledge_point": (
+                    str(item.get("knowledge_point", knowledge_point)).strip()
+                    or knowledge_point
+                ),
+                "question_type": (
+                    str(item.get("question_type", "choice")).strip() or "choice"
+                ),
+                "stem": str(item["stem"]).strip(),
+                "options": [str(opt).strip() for opt in options if str(opt).strip()],
+                "answer": str(item.get("answer", "")).strip(),
+                "analysis": str(item.get("analysis", "")).strip(),
+            }
+        )
     return questions
 
 
@@ -141,7 +153,9 @@ def analyze_document_with_llm(
     if not chunks:
         raise RuntimeError("AI 分析失败：文档没有可用文本切片")
     try:
-        context = "\n\n".join(f"[{i + 1}] {chunk[:800]}" for i, chunk in enumerate(chunks[:12]))
+        context = "\n\n".join(
+            f"[{i + 1}] {chunk[:800]}" for i, chunk in enumerate(chunks[:12])
+        )
         raw = llm(
             prompt=ANALYZE_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": f"文件名：{filename}\n\n{context}"}],
@@ -151,7 +165,9 @@ def analyze_document_with_llm(
     except Exception as exc:
         raise RuntimeError(f"AI 分析失败：{exc}") from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("menu"), list):
-        raise RuntimeError("AI 分析失败：模型未返回有效题型菜单，且已关闭规则菜单兜底")
+        raise RuntimeError(  # noqa: TRY004 - 外部模型响应无效，不是调用方类型错误
+            "AI 分析失败：模型未返回有效题型菜单，且已关闭规则菜单兜底"
+        )
     menu = []
     for item in raw["menu"]:
         if not isinstance(item, dict):
@@ -173,17 +189,23 @@ def analyze_document_with_llm(
 
 def check_answer(question: Any, user_answer: str) -> bool:
     """按题型判题：单选、填空、简答关键词重合。"""
-    answer = str(question.get("answer") if isinstance(question, dict) else getattr(question, "answer", "") or "").strip().lower()
+    answer = str(
+        question.get("answer")
+        if isinstance(question, dict)
+        else getattr(question, "answer", "") or ""
+    ).strip().lower()
     submitted = (user_answer or "").strip().lower()
     if not answer:
         return False
     question_type = str(
-        question.get("question_type") if isinstance(question, dict) else getattr(question, "question_type", "choice")
+        question.get("question_type")
+        if isinstance(question, dict)
+        else getattr(question, "question_type", "choice")
     ).strip()
     if question_type == "choice":
         return bool(submitted) and submitted.startswith(answer[:1])
     if question_type == "fill":
-        return answer in submitted or submitted in answer
+        return bool(submitted) and (answer in submitted or submitted in answer)
     answer_tokens = [w for w in re.split(r"[\s，。；、,.;]+", answer) if len(w) > 1]
     if not answer_tokens:
         return False

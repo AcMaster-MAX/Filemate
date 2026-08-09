@@ -1,4 +1,5 @@
-"""学习增强：文件出题、判题与错题本。"""
+"""学习增强：出题、判题与复习排期纯函数。"""
+
 from .generator import (
     analyze_document_with_llm,
     check_answer,
@@ -11,11 +12,9 @@ from .scheduling import (
     next_review_date_str,
     review_stage_after,
 )
-from .service import StudyService
 
 __all__ = [
     "REVIEW_INTERVALS",
-    "StudyService",
     "analyze_document_with_llm",
     "check_answer",
     "chunk_text",
