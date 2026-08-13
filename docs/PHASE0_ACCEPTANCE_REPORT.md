@@ -1,6 +1,6 @@
 # FileMate Phase 0 可信基础验收报告
 
-更新时间：2026-08-09
+更新时间：2026-08-13
 目标版本：`v1.2 Reliable Foundation`
 当前结论：**核心可信链路、前后端构建、Sidecar 与队友本地一键运行均已通过；Windows 安装包按产品决策延期到最终发布阶段。**
 
@@ -13,7 +13,7 @@
 | 冲突与回滚 | 不覆盖同名文件；中途失败恢复原文件 | 冲突、失败回滚、幂等测试 | ✅ 通过 |
 | 一键撤销 | 已归档文件和日历可恢复，重复撤销安全 | undo 单元与 API 集成测试 | ✅ 通过 |
 | API 契约 | 错误统一为 `{success,data,error}` | FastAPI handler 与持久化测试 | ✅ 通过 |
-| 完整后端回归 | 非 e2e 测试无失败 | `304 passed, 17 skipped, 5 deselected` | ✅ 通过 |
+| 完整后端回归 | 非 e2e 测试无失败 | `314 passed, 17 skipped, 5 deselected` | ✅ 通过 |
 | 静态检查 | 安全关键路径 Ruff 无错误 | `All checks passed!` | ✅ 通过 |
 | 前端生产构建 | TypeScript 与 Tauri 模式构建成功 | Vite 8.1.5，2274 modules | ✅ 通过 |
 | Python Sidecar | 无源码解释器启动、SQLite 创建、优雅关闭、端口释放 | `scripts/smoke_sidecar.ps1` 机器可读证据 | ✅ 通过 |

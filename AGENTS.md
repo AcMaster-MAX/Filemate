@@ -10,6 +10,7 @@ FileMate 是面向大学生的本地优先 AI 学习工作台，现役主链为 
 2. 公共合同阅读 `filemate/docs/API_SPEC.md`。
 3. UI 任务阅读 `design-system/filemate/MASTER.md`。
 4. 以当前代码、migration、路由和测试为事实源；`docs/ARCHITECTURE.md` 是 2.0 目标设计，不是现役实现。
+5. 分阶段开发任务按 `docs/AGENT_DEVELOPMENT_EXECUTION_PLAN.md` 执行，不跨任务卡扩张范围。
 
 ## 常用命令
 

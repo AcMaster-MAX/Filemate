@@ -4,7 +4,7 @@ FileMate 是一个面向大学生的本地优先 AI 学习工作台。它把散�
 
 > 项目类型：国家级大学生创新创业训练计划项目
 > 当前版本：`v1.2.0` Reliable Foundation
-> 当前基线日期：2026-08-09
+> 当前基线日期：2026-08-13
 > 初步版本截止：2026-08-31
 > 最终版本截止：2026-09-30
 
@@ -96,7 +96,7 @@ FileMate 是一个面向大学生的本地优先 AI 学习工作台。它把散�
 - Windows 队友执行 `scripts/dev.ps1 -Setup` 后可启动前后端。
 - 所有高影响文件操作必须先预览确认，不覆盖已有目标，并可撤销。
 - 数据写入 SQLite v8，关闭并重启后仍能读取。
-- 非 e2e 后端测试不得少于当前 `304 passed` 基线；新增功能必须新增测试。
+- 非 e2e 后端测试不得少于当前 `314 passed` 基线；新增功能必须新增测试。
 - `npm run build`、CI 静态检查和离线评测通过。
 - P0 缺陷为 0；P1 缺陷必须有负责人、复现步骤和明确截止日期。
 - README、API 文档和实际路由一致；不把计划功能写成已实现。
@@ -464,9 +464,9 @@ Set-Location ../..
 uv run python evaluation/run_evaluation.py --output _working/evaluation-report.json
 ```
 
-2026-08-09 发布基线：
+2026-08-13 发布基线：
 
-- 后端：`304 passed, 17 skipped, 5 deselected`。
+- 后端：`314 passed, 17 skipped, 5 deselected`。
 - SQLite 压力测试：10 线程、5000 次操作、0 错误。
 - Vue 类型检查和 Vite 生产构建通过。
 - GitHub Actions 后端与前端任务通过。
@@ -599,6 +599,7 @@ powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 | 文档 | 用途 | 状态 |
 |---|---|---|
 | [`filemate/docs/API_SPEC.md`](filemate/docs/API_SPEC.md) | 核心 Python 接口、HTTP API、可信执行合同 | 现役 |
+| [`docs/AGENT_DEVELOPMENT_EXECUTION_PLAN.md`](docs/AGENT_DEVELOPMENT_EXECUTION_PLAN.md) | 其他 Agent 的分阶段任务卡、文件边界与验收合同 | 现役执行计划 |
 | [`design-system/filemate/MASTER.md`](design-system/filemate/MASTER.md) | UI 色彩、布局、组件和禁止项 | 现役 |
 | [`docs/PHASE0_ACCEPTANCE_REPORT.md`](docs/PHASE0_ACCEPTANCE_REPORT.md) | 可信执行与工程门禁证据 | 现役证据 |
 | [`docs/FILEMATE_EVALUATION_BASELINE.md`](docs/FILEMATE_EVALUATION_BASELINE.md) | 离线可复现评测口径 | 现役证据 |
