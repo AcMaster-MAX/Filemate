@@ -281,6 +281,30 @@ CREATE INDEX IF NOT EXISTS idx_wrong_next_review
     ON wrong_questions(mastered, next_review_at);
 """
 
+_AI_LEARNING_SCHEMA = """\
+CREATE TABLE IF NOT EXISTS ai_learning_sessions (
+    session_id       TEXT PRIMARY KEY,
+    mode             TEXT NOT NULL CHECK(mode IN ('explore', 'reinforce')),
+    user_api_key     TEXT NOT NULL DEFAULT '',
+    marked_source_ids TEXT NOT NULL DEFAULT '[]',
+    summary_artifact_id TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+    message_id   TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL REFERENCES ai_learning_sessions(session_id) ON DELETE CASCADE,
+    role         TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content      TEXT NOT NULL,
+    citations    TEXT NOT NULL DEFAULT '[]',
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_messages_session
+    ON ai_messages(session_id, created_at);
+"""
+
 _MIGRATIONS = (
     (1, "initial_execution_schema", _SCHEMA),
     (2, "knowledge_persistence", _KNOWLEDGE_SCHEMA),
@@ -290,6 +314,7 @@ _MIGRATIONS = (
     (6, "persistent_study_plans", _STUDY_PLAN_SCHEMA),
     (7, "anonymous_product_feedback", _PRODUCT_FEEDBACK_SCHEMA),
     (8, "spaced_repetition", _SPACED_REPETITION_SCHEMA),
+    (9, "ai_learning", _AI_LEARNING_SCHEMA),
 )
 
 
@@ -1778,3 +1803,116 @@ class SQLiteStorage:
                 if conn.in_transaction:
                     conn.rollback()
                 raise
+
+    # ------------------------------------------------------------------
+    # AI 学习会话
+    # ------------------------------------------------------------------
+
+    def create_ai_session(
+        self,
+        session_id: str,
+        mode: str,
+        user_api_key: str = "",
+    ) -> None:
+        with self._write_lock:
+            conn = self._conn()
+            conn.execute(
+                """INSERT OR IGNORE INTO ai_learning_sessions
+                       (session_id, mode, user_api_key) VALUES (?, ?, ?)""",
+                (session_id, mode, user_api_key),
+            )
+            conn.commit()
+
+    def get_ai_session(self, session_id: str) -> dict[str, Any] | None:
+        row = self._conn().execute(
+            "SELECT * FROM ai_learning_sessions WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_ai_sessions(
+        self, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        rows = self._conn().execute(
+            "SELECT * FROM ai_learning_sessions ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_ai_session(
+        self, session_id: str, **kwargs: Any
+    ) -> None:
+        if not kwargs:
+            return
+        allowed = {"mode", "user_api_key", "marked_source_ids", "summary_artifact_id"}
+        invalid = set(kwargs) - allowed
+        if invalid:
+            raise ValueError(f"无效字段: {invalid}，允许: {allowed}")
+        set_clause = ", ".join(f"{k}=?" for k in kwargs)
+        values = [self._dump_json(v) if isinstance(v, (list, dict)) else v
+                  for v in kwargs.values()] + [_now_iso(), session_id]
+        with self._write_lock:
+            conn = self._conn()
+            conn.execute(
+                f"UPDATE ai_learning_sessions SET {set_clause}, updated_at=? "
+                f"WHERE session_id=?",
+                values,
+            )
+            conn.commit()
+
+    def delete_ai_session(self, session_id: str) -> bool:
+        with self._write_lock:
+            conn = self._conn()
+            conn.execute(
+                "DELETE FROM ai_messages WHERE session_id=?", (session_id,)
+            )
+            cur = conn.execute(
+                "DELETE FROM ai_learning_sessions WHERE session_id=?",
+                (session_id,),
+            )
+            conn.commit()
+        return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # AI 学习消息
+    # ------------------------------------------------------------------
+
+    def add_ai_message(
+        self,
+        message_id: str,
+        session_id: str,
+        role: str,
+        content: str,
+        citations: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._write_lock:
+            conn = self._conn()
+            conn.execute(
+                """INSERT INTO ai_messages
+                       (message_id, session_id, role, content, citations)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    message_id,
+                    session_id,
+                    role,
+                    content,
+                    self._dump_json(citations or []),
+                ),
+            )
+            conn.commit()
+
+    def get_ai_messages(
+        self, session_id: str
+    ) -> list[dict[str, Any]]:
+        rows = self._conn().execute(
+            "SELECT * FROM ai_messages WHERE session_id=? ORDER BY created_at ASC",
+            (session_id,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["citations"] = (
+                json.loads(item["citations"]) if item.get("citations") else []
+            )
+            result.append(item)
+        return result

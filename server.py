@@ -942,6 +942,23 @@ class StudyPlanDayRequest(BaseModel):
     completed: bool
 
 
+# ── AI 学习 ──────────────────────────────────
+
+class AILearningSessionCreate(BaseModel):
+    mode: Literal["explore", "reinforce"] = "explore"
+    user_api_key: str = ""
+    first_message: str | None = None
+
+
+class AILearningMessage(BaseModel):
+    content: str
+    file_text: str | None = None
+
+
+class AILearningSummary(BaseModel):
+    format: Literal["markdown"] = "markdown"
+
+
 def _answer_score(user_answer: str, reference_answer: str) -> float:
     """计算适用于客观题与短答案的稳定相似度。"""
     normalize = lambda value: re.sub(r"[^\w\u4e00-\u9fff]", "", value.lower())
@@ -1394,7 +1411,142 @@ async def ai_chat(request: ChatRequest):
         raise HTTPException(status_code=502, detail="AI 问答失败") from exc
 
 
-# =============== Main ===============
+# =============== AI 辅助学习 ===============
+
+def _make_llm_for_learning(api_key: str, base_url: str, model: str) -> LLMClient:
+    """根据用户自带的 API 配置构建 LLMClient。"""
+    from filemate.llm_client import LLMClient, LLMConfig
+    # 如果用户没提供 key，回退到系统默认配置
+    if not api_key:
+        env = LLMConfig.from_env()
+        api_key = env.api_key or api_key
+        base_url = env.base_url or base_url
+        model = env.model or model
+    cfg = LLMConfig(
+        provider="auto",
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        timeout=120.0,
+        max_retries=2,
+    )
+    return LLMClient(cfg)
+
+
+@app.post("/ai/learning/sessions", response_model=ApiResponse)
+async def create_ai_learning_session(req: AILearningSessionCreate):
+    """创建 AI 学习会话。"""
+    from filemate.understanding.ai_learning import AILearningChat
+
+    session_id = uuid.uuid4().hex[:12]
+    _storage.create_ai_session(
+        session_id=session_id,
+        mode=req.mode,
+        user_api_key=req.user_api_key,
+    )
+
+    result: dict[str, Any] = {"session_id": session_id, "mode": req.mode}
+
+    # 如果带了第一条消息，直接处理
+    if req.first_message and req.first_message.strip():
+        llm = _make_llm_for_learning(
+            api_key=req.user_api_key or os.environ.get("LLM_API_KEY", ""),
+            base_url=os.environ.get("LLM_BASE_URL", ""),
+            model=os.environ.get("LLM_MODEL", ""),
+        )
+        chat = AILearningChat(_storage, llm)
+        reply = chat.chat(
+            session_id=session_id,
+            user_message=req.first_message,
+            mode=req.mode,
+        )
+        result["reply"] = reply
+
+    return ApiResponse(success=True, data=result)
+
+
+@app.get("/ai/learning/sessions", response_model=ApiResponse)
+def list_ai_learning_sessions(limit: int = Query(50, ge=1, le=100)):
+    """获取 AI 学习会话列表。"""
+    sessions = _storage.list_ai_sessions(limit=limit)
+    return ApiResponse(success=True, data=sessions)
+
+
+@app.get("/ai/learning/sessions/{session_id}", response_model=ApiResponse)
+def get_ai_learning_session(session_id: str):
+    """获取 AI 学习会话详情（含消息历史）。"""
+    session = _storage.get_ai_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    messages = _storage.get_ai_messages(session_id)
+    session["messages"] = messages
+    return ApiResponse(success=True, data=session)
+
+
+@app.post("/ai/learning/sessions/{session_id}/messages", response_model=ApiResponse)
+async def send_ai_learning_message(session_id: str, req: AILearningMessage):
+    """发送消息到 AI 学习会话。"""
+    from filemate.understanding.ai_learning import AILearningChat
+
+    session = _storage.get_ai_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    # 持久化用户消息
+    _storage.add_ai_message(
+        message_id=uuid.uuid4().hex[:12],
+        session_id=session_id,
+        role="user",
+        content=req.content,
+    )
+
+    # 构建 LLM
+    api_key = session.get("user_api_key", "") or os.environ.get("LLM_API_KEY", "")
+    llm = _make_llm_for_learning(
+        api_key=api_key,
+        base_url=os.environ.get("LLM_BASE_URL", ""),
+        model=os.environ.get("LLM_MODEL", ""),
+    )
+    chat = AILearningChat(_storage, llm)
+
+    try:
+        reply = chat.chat(
+            session_id=session_id,
+            user_message=req.content,
+            mode=session["mode"],
+            uploaded_file_text=req.file_text or "",
+        )
+        return ApiResponse(success=True, data=reply)
+    except Exception as exc:
+        logger.exception("AI学习对话失败")
+        raise HTTPException(status_code=502, detail="AI 学习对话失败") from exc
+
+
+@app.post("/ai/learning/sessions/{session_id}/summary", response_model=ApiResponse)
+async def summarize_ai_learning_session(session_id: str):
+    """总结对话并写入知识库。"""
+    from filemate.understanding.ai_learning import AILearningChat
+
+    session = _storage.get_ai_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    api_key = session.get("user_api_key", "") or os.environ.get("LLM_API_KEY", "")
+    llm = _make_llm_for_learning(
+        api_key=api_key,
+        base_url=os.environ.get("LLM_BASE_URL", ""),
+        model=os.environ.get("LLM_MODEL", ""),
+    )
+    chat = AILearningChat(_storage, llm)
+
+    try:
+        result = chat.generate_summary(session_id)
+        return ApiResponse(success=True, data=result)
+    except ValueError:
+        raise
+    except Exception as exc:
+        logger.exception("生成总结失败")
+        raise HTTPException(status_code=502, detail="生成总结失败") from exc
 
 def run_server() -> None:
     """启动本地 FastAPI 服务。"""

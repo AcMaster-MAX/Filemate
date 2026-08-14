@@ -110,3 +110,50 @@ export interface HistoryItem {
   execution?: ExecutionRecord | null
   can_undo?: boolean
 }
+
+// ─── AI 辅助学习 ──────────────────────────────
+
+export type AILearningMode = 'explore' | 'reinforce'
+
+export interface AICitation {
+  source_id: string
+  source_name: string
+  excerpt: string
+  score: number
+}
+
+export interface AIMessage {
+  message_id: string
+  session_id: string
+  role: 'user' | 'assistant'
+  content: string
+  citations: AICitation[]
+  created_at: string
+}
+
+export interface AISession {
+  session_id: string
+  mode: AILearningMode
+  user_api_key: string
+  marked_source_ids: string[]
+  summary_artifact_id?: string
+  created_at: string
+  messages?: AIMessage[]
+}
+
+export interface AISessionCreateResponse {
+  session_id: string
+  mode: AILearningMode
+  reply?: {
+    role: string
+    content: string
+    citations: AICitation[]
+    message_id: string
+  }
+}
+
+export interface AISummaryResult {
+  artifact_id: string
+  title: string
+  content: string
+}

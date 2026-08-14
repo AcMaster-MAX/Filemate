@@ -26,10 +26,33 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
-      '^/ai': {
+      '/ai/summarize': {
         target: 'http://127.0.0.1:8001',
         changeOrigin: true,
-        ws: true,
+      },
+      '/ai/knowledge-cards': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/ai/questions': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/ai/notes': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/ai/study-plan': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/ai/chat': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/ai/learning/sessions': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
       },
       '^/knowledge': {
         target: 'http://127.0.0.1:8001',

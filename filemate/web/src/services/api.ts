@@ -798,3 +798,84 @@ export async function updateStudyPlanDay(
   if (response.success && response.data) return response.data
   throw new Error(response.error || '学习进度保存失败')
 }
+
+// =============== AI 辅助学习 API ===============
+
+import type {
+  AISession,
+  AISessionCreateResponse,
+  AIMessage,
+  AISummaryResult
+} from '../types'
+
+export interface AILearningSessionCreateParams {
+  mode: 'explore' | 'reinforce'
+  userApiKey: string
+  firstMessage?: string
+}
+
+export async function createAILearningSession(
+  params: AILearningSessionCreateParams
+): Promise<AISessionCreateResponse> {
+  const response = await api.post<any, ApiResponse<AISessionCreateResponse>>(
+    '/ai/learning/sessions',
+    {
+      mode: params.mode,
+      user_api_key: params.userApiKey,
+      first_message: params.firstMessage,
+    }
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || '创建学习会话失败')
+}
+
+export async function getAILearningSessions(limit = 50): Promise<AISession[]> {
+  const response = await api.get<any, ApiResponse<AISession[]>>(
+    `/ai/learning/sessions?limit=${limit}`
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || '获取学习会话列表失败')
+}
+
+export async function getAILearningSession(
+  sessionId: string
+): Promise<AISession> {
+  const response = await api.get<any, ApiResponse<AISession>>(
+    `/ai/learning/sessions/${sessionId}`
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || '获取学习会话失败')
+}
+
+export interface AILearningMessageParams {
+  content: string
+  fileText?: string
+}
+
+export async function sendAILearningMessage(
+  sessionId: string,
+  params: AILearningMessageParams
+): Promise<{ role: string; content: string; citations: AICitation[]; message_id: string }> {
+  const response = await api.post<any, ApiResponse<{
+    role: string
+    content: string
+    citations: AICitation[]
+    message_id: string
+  }>>(
+    `/ai/learning/sessions/${sessionId}/messages`,
+    { content: params.content, file_text: params.fileText || '' }
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || '发送消息失败')
+}
+
+export async function summarizeAILearningSession(
+  sessionId: string
+): Promise<AISummaryResult> {
+  const response = await api.post<any, ApiResponse<AISummaryResult>>(
+    `/ai/learning/sessions/${sessionId}/summary`,
+    {}
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || '生成总结失败')
+}
