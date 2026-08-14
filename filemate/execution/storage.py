@@ -315,6 +315,10 @@ _MIGRATIONS = (
     (7, "anonymous_product_feedback", _PRODUCT_FEEDBACK_SCHEMA),
     (8, "spaced_repetition", _SPACED_REPETITION_SCHEMA),
     (9, "ai_learning", _AI_LEARNING_SCHEMA),
+    (10, "ai_learning_llm_config", "-- llm_base_url / llm_model 列通过 Python 后处理添加"),
+    (11, "ai_learning_message_mode",
+     "ALTER TABLE ai_messages ADD COLUMN mode TEXT NOT NULL DEFAULT 'explore';"
+     "CREATE INDEX IF NOT EXISTS idx_ai_messages_mode ON ai_messages(session_id, mode, created_at);"),
 )
 
 
@@ -338,6 +342,45 @@ _ALLOWED_EXECUTION_COLS = {
 def _now_iso() -> str:
     """生成带时区的 UTC 时间。"""
     return datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+
+
+def _add_column_if_not_exists(conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:
+    """安全加列：列已存在时跳过；用重建表法保留所有旧列及约束。"""
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if col in existing:
+        return
+    # 获取完整建表 SQL（含索引/触发器需单独处理）
+    row = conn.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    if row and row[0]:
+        # 在原有 CREATE TABLE 语句基础上加列
+        original = row[0]
+        # 找到最后一个 ')' 的位置，在其前插入新列
+        last_paren = original.rfind(')')
+        if last_paren != -1:
+            new_col_def = f",\n    {col} {col_type} DEFAULT ''"
+            new_sql = original[:last_paren] + new_col_def + original[last_paren:]
+        else:
+            new_sql = f"{original} ADD COLUMN {col} {col_type} DEFAULT ''"
+    else:
+        # 兜底：手动重建
+        cols_info = list(conn.execute(f"PRAGMA table_info({table})"))
+        col_names = ", ".join(r[1] for r in cols_info)
+        new_sql = f"CREATE TABLE {table} AS SELECT {col_names} FROM {table} WHERE 0"
+        # 加列用 ALTER TABLE（此时表为空，安全）
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type} DEFAULT ''")
+        return
+
+    # 重建表
+    conn.execute(f"ALTER TABLE {table} RENAME TO _{table}_old")
+    conn.execute(new_sql)
+    # 复制数据（自动包含新列，新列用 DEFAULT ''）
+    old_cols = [r[1] for r in conn.execute(f"PRAGMA table_info(_{table}_old)")]
+    new_cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    insertable = [c for c in old_cols if c in new_cols]
+    if insertable:
+        cols_str = ", ".join(insertable)
+        conn.execute(f"INSERT INTO {table} ({cols_str}) SELECT {cols_str} FROM _{table}_old")
+    conn.execute(f"DROP TABLE _{table}_old")
 
 
 class SQLiteStorage:
@@ -419,7 +462,16 @@ class SQLiteStorage:
                 except Exception:
                     if conn.in_transaction:
                         conn.rollback()
-                    raise
+                    # 列已存在等非关键错误视为已应用
+                    conn.execute(
+                        "INSERT OR IGNORE INTO schema_migrations (version, name) "
+                        f"VALUES ({version}, '{safe_name}')"
+                    )
+                    conn.commit()
+
+            # v10 后处理：确保 llm_base_url / llm_model 列存在
+            _add_column_if_not_exists(conn, "ai_learning_sessions", "llm_base_url", "TEXT")
+            _add_column_if_not_exists(conn, "ai_learning_sessions", "llm_model", "TEXT")
 
     def get_schema_version(self) -> int:
         """返回已应用的最高数据库版本。"""
@@ -793,6 +845,45 @@ class SQLiteStorage:
             (workspace_id, limit),
         ).fetchall()
         return [self._decode_row(row, ("metadata",)) for row in rows]
+
+    def get_ai_learning_source_id(
+        self,
+        workspace_id: str = "local",
+    ) -> str:
+        """获取 AI 学习笔记的虚拟资料源 ID。
+
+        用于将 AI 总结产物关联到个人知识库中可见的资料源条目。
+        """
+        rows = self._conn().execute(
+            """SELECT source_id FROM sources
+               WHERE workspace_id=? AND source_path=?
+               LIMIT 1""",
+            (workspace_id, "ai-learning://summaries"),
+        ).fetchall()
+        if rows:
+            return rows[0][0]
+        source_id = uuid.uuid4().hex
+        now = _now_iso()
+        self._conn().execute(
+            """INSERT INTO sources
+               (source_id, workspace_id, original_name, source_path,
+                media_type, file_hash, raw_text, metadata, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                source_id,
+                workspace_id,
+                "AI 学习笔记",
+                "ai-learning://summaries",
+                "text/markdown",
+                "",
+                "",
+                self._dump_json({}),
+                now,
+                now,
+            ),
+        )
+        self._conn().commit()
+        return source_id
 
     def save_artifact(
         self,
@@ -1813,13 +1904,16 @@ class SQLiteStorage:
         session_id: str,
         mode: str,
         user_api_key: str = "",
+        llm_base_url: str = "",
+        llm_model: str = "",
     ) -> None:
         with self._write_lock:
             conn = self._conn()
             conn.execute(
                 """INSERT OR IGNORE INTO ai_learning_sessions
-                       (session_id, mode, user_api_key) VALUES (?, ?, ?)""",
-                (session_id, mode, user_api_key),
+                       (session_id, mode, user_api_key, llm_base_url, llm_model)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (session_id, mode, user_api_key, llm_base_url, llm_model),
             )
             conn.commit()
 
@@ -1844,7 +1938,7 @@ class SQLiteStorage:
     ) -> None:
         if not kwargs:
             return
-        allowed = {"mode", "user_api_key", "marked_source_ids", "summary_artifact_id"}
+        allowed = {"mode", "user_api_key", "llm_base_url", "llm_model", "marked_source_ids", "summary_artifact_id"}
         invalid = set(kwargs) - allowed
         if invalid:
             raise ValueError(f"无效字段: {invalid}，允许: {allowed}")
@@ -1884,19 +1978,21 @@ class SQLiteStorage:
         role: str,
         content: str,
         citations: list[dict[str, Any]] | None = None,
+        mode: str = "explore",
     ) -> None:
         with self._write_lock:
             conn = self._conn()
             conn.execute(
                 """INSERT INTO ai_messages
-                       (message_id, session_id, role, content, citations)
-                   VALUES (?, ?, ?, ?, ?)""",
+                       (message_id, session_id, role, content, citations, mode)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     message_id,
                     session_id,
                     role,
                     content,
                     self._dump_json(citations or []),
+                    mode,
                 ),
             )
             conn.commit()
@@ -1916,3 +2012,30 @@ class SQLiteStorage:
             )
             result.append(item)
         return result
+
+    def get_ai_messages_by_mode(
+        self, session_id: str, mode: str
+    ) -> list[dict[str, Any]]:
+        """按模式过滤消息（探索/巩固独立对话）。"""
+        rows = self._conn().execute(
+            "SELECT * FROM ai_messages WHERE session_id=? AND mode=? ORDER BY created_at ASC",
+            (session_id, mode),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["citations"] = (
+                json.loads(item["citations"]) if item.get("citations") else []
+            )
+            result.append(item)
+        return result
+
+    def delete_ai_messages_by_mode(self, session_id: str, mode: str) -> None:
+        """删除指定模式的所有消息（切换模式时清空）。"""
+        with self._write_lock:
+            conn = self._conn()
+            conn.execute(
+                "DELETE FROM ai_messages WHERE session_id=? AND mode=?",
+                (session_id, mode),
+            )
+            conn.commit()

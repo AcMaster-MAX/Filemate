@@ -72,7 +72,7 @@ const rateResult=async(result:KnowledgeSearchResult,index:number,rating:1|-1)=>{
 const toggleArtifacts=async(sourceId:string)=>{if(expandedSource.value===sourceId){expandedSource.value='';return}expandedSource.value=sourceId;artifactLoading.value=true;try{artifacts.value=await getKnowledgeArtifacts(sourceId)}catch(error:any){ElMessage.error(error.message||'产物加载失败')}finally{artifactLoading.value=false}}
 const suffix=(name:string)=>name.includes('.')?name.split('.').pop()!.slice(0,4).toUpperCase():'DOC'
 const formatDate=(value:string)=>new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date(value))
-const artifactLabel=(type:string)=>({summary:'摘要',knowledge_cards:'知识卡',questions:'练习题',notes:'笔记',study_plan:'学习计划'}[type]||type)
+const artifactLabel=(type:string)=>(({summary:'摘要',knowledge_cards:'知识卡',questions:'练习题',notes:'笔记',study_plan:'学习计划',ai_summary:'AI 学习笔记'}[type])||type)
 const formatArtifactContent=(content:any)=>typeof content==='string'?content:JSON.stringify(content,null,2)
 const syncDraft=(artifact:KnowledgeArtifact)=>{draftTitle.value=artifact.title;structuredContent.value=typeof artifact.content!=='string';draftContent.value=formatArtifactContent(artifact.content)}
 const openArtifact=async(artifactId:string)=>{try{const artifact=await getKnowledgeArtifact(artifactId);selectedArtifact.value=artifact;syncDraft(artifact);editing.value=false}catch(error:any){ElMessage.error(error.message||'产物打开失败')}}

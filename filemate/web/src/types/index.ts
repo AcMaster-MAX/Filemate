@@ -129,6 +129,7 @@ export interface AIMessage {
   content: string
   citations: AICitation[]
   created_at: string
+  mode?: string
 }
 
 export interface AISession {
@@ -144,12 +145,6 @@ export interface AISession {
 export interface AISessionCreateResponse {
   session_id: string
   mode: AILearningMode
-  reply?: {
-    role: string
-    content: string
-    citations: AICitation[]
-    message_id: string
-  }
 }
 
 export interface AISummaryResult {

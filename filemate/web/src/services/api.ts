@@ -811,7 +811,8 @@ import type {
 export interface AILearningSessionCreateParams {
   mode: 'explore' | 'reinforce'
   userApiKey: string
-  firstMessage?: string
+  llmBaseUrl: string
+  llmModel: string
 }
 
 export async function createAILearningSession(
@@ -822,11 +823,62 @@ export async function createAILearningSession(
     {
       mode: params.mode,
       user_api_key: params.userApiKey,
-      first_message: params.firstMessage,
+      llm_base_url: params.llmBaseUrl,
+      llm_model: params.llmModel,
     }
   )
   if (response.success && response.data) return response.data
   throw new Error(response.error || '创建学习会话失败')
+}
+
+export interface AILearningSettingsParams {
+  userApiKey: string
+  llmBaseUrl: string
+  llmModel: string
+}
+
+export async function validateAILearningConfig(
+  sessionId: string,
+  params: AILearningSettingsParams
+): Promise<{ message: string }> {
+  const response = await api.post<any, ApiResponse<{ message: string }>>(
+    `/ai/learning/sessions/${sessionId}/validate-config`,
+    {
+      user_api_key: params.userApiKey,
+      llm_base_url: params.llmBaseUrl,
+      llm_model: params.llmModel,
+    }
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || 'API 验证失败')
+}
+
+export async function updateAILearningSettings(
+  sessionId: string,
+  params: AILearningSettingsParams
+): Promise<{ message: string }> {
+  const response = await api.put<any, ApiResponse<{ message: string }>>(
+    `/ai/learning/sessions/${sessionId}/settings`,
+    {
+      user_api_key: params.userApiKey,
+      llm_base_url: params.llmBaseUrl,
+      llm_model: params.llmModel,
+    }
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || '保存配置失败')
+}
+
+export async function updateAILearningMode(
+  sessionId: string,
+  mode: 'explore' | 'reinforce'
+): Promise<{ mode: string }> {
+  const response = await api.put<any, ApiResponse<{ mode: string }>>(
+    `/ai/learning/sessions/${sessionId}/mode`,
+    { mode }
+  )
+  if (response.success && response.data) return response.data
+  throw new Error(response.error || '切换模式失败')
 }
 
 export async function getAILearningSessions(limit = 50): Promise<AISession[]> {
