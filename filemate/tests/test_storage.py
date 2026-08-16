@@ -42,10 +42,10 @@ class TestSchemaInit:
             assert expected in names
 
     def test_versioned_migrations_applied(self, storage: SQLiteStorage) -> None:
-        assert storage.get_schema_version() == 10
+        assert storage.get_schema_version() == 11
         migrations = storage.list_migrations()
-        assert [item["version"] for item in migrations] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        assert migrations[-1]["name"] == "ai_learning_llm_config"
+        assert [item["version"] for item in migrations] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        assert migrations[-1]["name"] == "ai_learning_message_mode"
 
     def test_knowledge_tables_and_local_workspace_exist(
         self,

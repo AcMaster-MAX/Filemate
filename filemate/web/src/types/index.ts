@@ -136,6 +136,8 @@ export interface AISession {
   session_id: string
   mode: AILearningMode
   user_api_key: string
+  llm_base_url?: string
+  llm_model?: string
   marked_source_ids: string[]
   summary_artifact_id?: string
   created_at: string

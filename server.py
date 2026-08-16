@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -30,6 +30,7 @@ from filemate.execution.confirmation_executor import (
     ExecutionError,
 )
 from filemate.execution.storage import SQLiteStorage
+from filemate.llm_client import LLMClient
 
 # 加载 .env 文件
 env_path = Path(__file__).parent / ".env"
@@ -1475,9 +1476,9 @@ def get_ai_learning_session(session_id: str):
 @app.get("/ai/learning/sessions/{session_id}/download")
 def download_ai_learning_session(session_id: str, mode: str = ""):
     """导出对话为 Markdown 文件（公式保留 LaTeX 源码）。"""
-    from fastapi.responses import FileResponse
     import tempfile
-    import os
+
+    from fastapi.responses import FileResponse
 
     session = _storage.get_ai_session(session_id)
     if session is None:
@@ -1499,39 +1500,37 @@ def download_ai_learning_session(session_id: str, mode: str = ""):
 
     lines = [
         f"# {mode_title} - 学习对话记录",
-        f"",
+        "",
         f"> 会话 ID: {session_id}",
-        f"> 导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"> 导出时间: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}",
         f"> 消息数: {len(messages)}",
-        f"",
-        f"---",
-        f"",
+        "",
+        "---",
+        "",
     ]
 
     for m in messages:
         role_label = "用户" if m["role"] == "user" else "AI 助手"
         lines.append(f"### {role_label}")
-        lines.append(f"")
+        lines.append("")
         lines.append(m["content"])
-        lines.append(f"")
-        lines.append(f"---")
-        lines.append(f"")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
 
     content = "\n".join(lines)
 
-    # 写入临时文件
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-    try:
+    # 写入临时文件（delete=False 保留文件供 FileResponse 读取）
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    ) as tmp:
         tmp.write(content)
-        tmp.close()
-        return FileResponse(
-            path=tmp.name,
-            filename=filename,
-            media_type="text/markdown; charset=utf-8",
-        )
-    except Exception:
-        os.unlink(tmp.name)
-        raise
+        tmp_path = tmp.name
+    return FileResponse(
+        path=tmp_path,
+        filename=filename,
+        media_type="text/markdown; charset=utf-8",
+    )
 
 
 class AILearningSettingsUpdate(BaseModel):
@@ -1720,7 +1719,7 @@ if _frontend_dist.is_dir():
     # favicon 等
     for static_file in _frontend_dist.glob("*.svg"):
         route = f"/{static_file.name}"
-        app.get(route)(lambda r: FileResponse(static_file))
+        app.get(route)(lambda r, sf=static_file: FileResponse(sf))
 
     # SPA 兜底：所有非 API 路由返回 index.html
     @app.get("/{full_path:path}")
