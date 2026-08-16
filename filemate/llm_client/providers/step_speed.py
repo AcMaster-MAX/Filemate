@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 import requests
 
-from .base import BaseLLMProvider
 from ..config import LLMConfig
 from ..exceptions import (
     LLMAPIError,
@@ -16,6 +14,7 @@ from ..exceptions import (
     LLMRateLimitError,
     LLMTimeoutError,
 )
+from .base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
 

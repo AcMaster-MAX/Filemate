@@ -317,8 +317,8 @@ _MIGRATIONS = (
     (9, "ai_learning", _AI_LEARNING_SCHEMA),
     (10, "ai_learning_llm_config", "-- llm_base_url / llm_model 列通过 Python 后处理添加"),
     (11, "ai_learning_message_mode",
-     "ALTER TABLE ai_messages ADD COLUMN mode TEXT NOT NULL DEFAULT 'explore';"
-     "CREATE INDEX IF NOT EXISTS idx_ai_messages_mode ON ai_messages(session_id, mode, created_at);"),
+     ("ALTER TABLE ai_messages ADD COLUMN mode TEXT NOT NULL DEFAULT 'explore';"
+      "CREATE INDEX IF NOT EXISTS idx_ai_messages_mode ON ai_messages(session_id, mode, created_at);")),
 )
 
 
@@ -350,7 +350,7 @@ def _add_column_if_not_exists(conn: sqlite3.Connection, table: str, col: str, co
     if col in existing:
         return
     # 获取完整建表 SQL（含索引/触发器需单独处理）
-    row = conn.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
     if row and row[0]:
         # 在原有 CREATE TABLE 语句基础上加列
         original = row[0]
@@ -368,6 +368,7 @@ def _add_column_if_not_exists(conn: sqlite3.Connection, table: str, col: str, co
         new_sql = f"CREATE TABLE {table} AS SELECT {col_names} FROM {table} WHERE 0"
         # 加列用 ALTER TABLE（此时表为空，安全）
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type} DEFAULT ''")
+        conn.commit()
         return
 
     # 重建表
@@ -381,6 +382,7 @@ def _add_column_if_not_exists(conn: sqlite3.Connection, table: str, col: str, co
         cols_str = ", ".join(insertable)
         conn.execute(f"INSERT INTO {table} ({cols_str}) SELECT {cols_str} FROM _{table}_old")
     conn.execute(f"DROP TABLE _{table}_old")
+    conn.commit()
 
 
 class SQLiteStorage:
@@ -459,7 +461,7 @@ class SQLiteStorage:
                         f"VALUES ({version}, '{safe_name}');\n"
                         "COMMIT;"
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 - 迁移容错：列已存在等非关键错误视为已应用
                     if conn.in_transaction:
                         conn.rollback()
                     # 列已存在等非关键错误视为已应用

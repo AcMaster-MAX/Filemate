@@ -272,7 +272,7 @@ import {
   updateAILearningMode,
   getKnowledgeArtifact
 } from '../services/api'
-import type { AIMessage, AICitation, AISession } from '../types'
+import type { AIMessage, AICitation } from '../types'
 
 // ──────────────────────────────────────────
 // 状态
@@ -419,28 +419,6 @@ async function saveConfig() {
   }
 }
 
-async function loadHistory() {
-  // 尝试加载最近的会话
-  try {
-    const sessions = await getAILearningSessions(1)
-    if (sessions.length > 0) {
-      const latest = sessions[0]
-      const detail = await getAILearningSession(latest.session_id)
-      sessionId.value = detail.session_id
-      mode.value = detail.mode
-      // 按模式过滤消息
-      const allMessages = detail.messages || []
-      messages.value = allMessages.filter((msg: any) => {
-        if (!msg.mode) return true // 旧消息无 mode 字段时归入当前模式
-        return msg.mode === detail.mode
-      })
-      await scrollToBottom()
-    }
-  } catch {
-    // 没有历史会话，忽略
-  }
-}
-
 function scrollToBottom() {
   nextTick(() => {
     if (chatContainer.value) {
@@ -478,25 +456,6 @@ async function clearConversation() {
     ElMessage.success('对话已清空')
   } catch {
     // 用户取消
-  }
-}
-
-async function downloadConversation() {
-  if (!sessionId.value || !hasMessages.value) return
-  try {
-    const blob = await downloadAILearningConversation(sessionId.value, mode.value)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const modeLabel = mode.value === 'explore' ? '探索' : '巩固'
-    a.download = `AI学习对话_${modeLabel}_${sessionId.value.slice(0, 8)}.md`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    ElMessage.success('对话已导出为 Markdown 文件')
-  } catch (err: any) {
-    ElMessage.error(err.message || '导出失败')
   }
 }
 
@@ -649,8 +608,8 @@ function renderMarkdown(text: string): string {
     .replace(/>/g, '&gt;')
 
   // 数学公式占位（避免 markdown 解析器破坏公式内容）
-  const mathBlocks: string[] = []
-  const mathInlines: string[] = []
+  const mathBlocks: Array<{ placeholder: string; expr: string }> = []
+  const mathInlines: Array<{ placeholder: string; expr: string }> = []
   let blockIdx = 0
   let inlineIdx = 0
 
@@ -675,12 +634,12 @@ function renderMarkdown(text: string): string {
   })
 
   // 表格
-  html = html.replace(/^(.+?)\n[ \t]*\|[-| ]+\|[ \t]*\n([\s\S]+?)(?=\n\n|\n*$)/gm, (match, headerRow, bodyRows) => {
-    const headers = headerRow.split('|').filter((_, i, arr) => i > 0 && i < arr.length - 1 || arr.length <= 2 ? i < arr.length : i > 0 && i < arr.length - 1).map(h => h.trim()).filter(Boolean)
+  html = html.replace(/^(.+?)\n[ \t]*\|[-| ]+\|[ \t]*\n([\s\S]+?)(?=\n\n|\n*$)/gm, (_match: string, headerRow: string, bodyRows: string) => {
+    const headers = headerRow.split('|').map(h => h.trim()).filter(h => h.length > 0)
     const rows = bodyRows.trim().split('\n')
     let table = '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>'
     for (const row of rows) {
-      const cells = row.split('|').map(c => c.trim()).filter((_, i, arr) => arr.length <= 2 ? true : i > 0 && i < arr.length - 1)
+      const cells = row.split('|').map(c => c.trim()).filter(c => c.length > 0)
       if (cells.length) {
         table += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>'
       }
@@ -747,7 +706,7 @@ function initKatex(): Promise<void> {
     katexReady = Promise.resolve()
     return katexReady
   }
-  katexReady = new Promise((resolve, reject) => {
+  katexReady = new Promise<void>((resolve) => {
     const link = document.createElement('link')
     link.rel = 'stylesheet'
     link.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css'

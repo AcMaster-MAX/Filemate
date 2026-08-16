@@ -8,17 +8,15 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import re
 import uuid
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 from filemate.execution.storage import SQLiteStorage
-from filemate.llm_client import LLMClient, LLMConfig
+from filemate.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +110,7 @@ def expand_query(
         )
         queries = [line.strip() for line in raw.strip().split("\n") if line.strip()]
         return queries[:5] if queries else [query]
-    except Exception:
+    except Exception:  # noqa: BLE001 - LLM 调用失败时降级为原查询
         return [query]
 
 
@@ -165,7 +163,7 @@ def rerank_chunks(
         if ranked:
             return ranked
     except Exception:
-        pass
+        logger.debug("LLM 重排失败，使用 BM25 原始顺序", exc_info=True)
     return chunks[:top_k]
 
 
@@ -362,8 +360,7 @@ class AILearningChat:
             "message_id": "...",
         }
         """
-        # 1. 持久化用户消息
-        msg_id = uuid.uuid4().hex[:12]
+        # 1. 用户消息已由路由层持久化，此处只初始化引用列表
         citations: list[dict[str, Any]] = []
 
         # 2. 根据模式构建上下文
@@ -427,13 +424,14 @@ class AILearningChat:
             if not reply:
                 logger.warning("AI 返回空回复，原始 messages 长度=%d", len(messages))
                 reply = "抱歉，AI 未返回有效回复，请重试。"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - LLM 调用失败时返回友好提示
             logger.error("AI 学习对话失败: %s", exc)
             reply = f"抱歉，AI 调用失败：{exc}"
 
         # 5. 持久化 AI 回复（带上模式）
+        assistant_msg_id = uuid.uuid4().hex[:12]
         self._storage.add_ai_message(
-            message_id=uuid.uuid4().hex[:12],
+            message_id=assistant_msg_id,
             session_id=session_id,
             role="assistant",
             content=reply,
@@ -445,7 +443,7 @@ class AILearningChat:
             "role": "assistant",
             "content": reply,
             "citations": citations,
-            "message_id": msg_id,
+            "message_id": assistant_msg_id,
         }
 
     def generate_summary(self, session_id: str) -> dict[str, Any]:

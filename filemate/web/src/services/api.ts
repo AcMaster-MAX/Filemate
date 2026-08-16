@@ -804,7 +804,7 @@ export async function updateStudyPlanDay(
 import type {
   AISession,
   AISessionCreateResponse,
-  AIMessage,
+  AICitation,
   AISummaryResult
 } from '../types'
 
